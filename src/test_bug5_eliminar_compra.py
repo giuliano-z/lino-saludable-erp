@@ -174,6 +174,7 @@ def test_eliminar_compra_legacy_restaura_stock():
         materia_prima=mp,
         cantidad_mayoreo=cantidad_comprada,
         precio_unitario_mayoreo=15,
+        precio_mayoreo=500,
         total=450
     )
     

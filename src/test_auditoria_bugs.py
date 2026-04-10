@@ -449,6 +449,8 @@ def test_urls_criticas_cargan():
     print_header("TEST 10: URLs Críticas Cargan")
     
     user = User.objects.first()
+    if not user:
+        user = User.objects.create_user(username='testuser', password='test123')
     client = Client()
     client.force_login(user)
     
