@@ -975,7 +975,6 @@ def crear_producto(request):
     return render(request, 'modules/productos/form.html', {'form': form, 'title': 'Crear Producto', 'producto': None})
 
 @login_required
-@login_required
 def detalle_producto(request, pk):
     """Vista de detalle de producto con información completa"""
     producto = get_object_or_404(Producto, pk=pk)

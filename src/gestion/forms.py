@@ -211,6 +211,18 @@ class ProductoForm(forms.ModelForm):
         nueva_categoria = cleaned_data.get('nueva_categoria')
         tipo_producto = cleaned_data.get('tipo_producto')
         
+        # 🛡️ BUG-B FIX: Validación independiente de tiene_receta
+        # Esta validación ocurre SIN importar el tipo_producto
+        # Si el usuario marca "¿Usa receta?" DEBE seleccionar una receta
+        tiene_receta = cleaned_data.get('tiene_receta')
+        receta = cleaned_data.get('receta')
+        
+        if tiene_receta and not receta:
+            raise forms.ValidationError(
+                '❌ Si marca "¿Usa receta?" debe seleccionar una receta. '
+                'Si el producto NO usa receta, desmarca la opción.'
+            )
+        
         # Si no se especificó tipo_producto, establecer valor por defecto basado en configuración
         if not tipo_producto:
             # Determinar tipo basado en si tiene receta o materia prima
