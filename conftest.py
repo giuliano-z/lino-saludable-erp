@@ -7,6 +7,14 @@ def django_db_setup():
     """Configurar base de datos para tests."""
     pass
 
+@pytest.fixture(autouse=True)
+def enable_db_access_for_all_tests(db):
+    """
+    Habilitar acceso a base de datos automáticamente para todos los tests.
+    Esto evita RuntimeError: Database access not allowed.
+    """
+    pass
+
 @pytest.fixture(scope="session") 
 def live_server(request):
     """Servidor de desarrollo para tests E2E."""
