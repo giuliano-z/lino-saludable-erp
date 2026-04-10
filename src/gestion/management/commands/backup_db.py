@@ -1,363 +1,167 @@
 """
-Comando Django para backup automático de la base de datos con opción de email
-Uso: 
-  - Local: python manage.py backup_db
-  - Con email: python manage.py backup_db --send-email
-
-Este comando:
-1. Detecta automáticamente si es PostgreSQL o SQLite
-2. Para PostgreSQL: usa pg_dump con credenciales de DATABASE_URL
-3. Para SQLite: copia directamente el archivo db.sqlite3
-4. Opcionalmente comprime y envía por email
-5. Mantiene solo los últimos 7 días de backups locales
-6. Puede ejecutarse desde cron job para backups automáticos
+Management command: backup_db
+Exporta todos los datos de la BD usando dumpdata de Django (JSON)
+Comprime el resultado en .gz
+Opcionalmente envía por email
+Limpia backups antiguos (>7 días)
 """
 
-from django.core.management.base import BaseCommand
-from django.conf import settings
-from django.core.mail import EmailMessage
-from pathlib import Path
-from datetime import datetime, timedelta
-import shutil
-import os
-import subprocess
+import json
 import gzip
-import logging
+import os
+from datetime import datetime, timedelta
+from io import StringIO
 
-logger = logging.getLogger(__name__)
+from django.core.management.base import BaseCommand
+from django.core.management import call_command
+from django.core.mail import EmailMessage
+from django.conf import settings
 
 
 class Command(BaseCommand):
-    help = 'Crea backup de la base de datos y opcionalmente lo envía por email'
-    
-    # Deshabilitar system checks para este comando
-    requires_system_checks = []
+    help = 'Respalda la base de datos usando dumpdata (JSON) y opcionalmente envía por email'
 
     def add_arguments(self, parser):
         parser.add_argument(
-            '--keep-days',
-            type=int,
-            default=7,
-            help='Número de días de backups a mantener (default: 7)'
-        )
-        parser.add_argument(
             '--send-email',
             action='store_true',
-            help='Enviar backup comprimido por email'
+            dest='send_email',
+            help='Envía el backup por email a la dirección configurada'
         )
 
     def handle(self, *args, **options):
-        """Ejecuta el backup de la base de datos"""
-        
-        # Directorio base del proyecto
-        base_dir = Path(settings.BASE_DIR)
-        backup_dir = base_dir / 'backups'
-        backup_dir.mkdir(exist_ok=True)
-        
-        # Obtener configuración de base de datos
-        db_config = settings.DATABASES.get('default', {})
-        engine = db_config.get('ENGINE', '')
-        
-        self.stdout.write(f'🔍 Motor de BD detectado: {engine}\n')
-        
-        # Detectar tipo de base de datos y hacer backup
-        backup_path = None
-        if 'postgresql' in engine:
-            backup_path = self.backup_postgresql(db_config, backup_dir, options['keep_days'])
-        elif 'sqlite' in engine:
-            backup_path = self.backup_sqlite(db_config, backup_dir, options['keep_days'])
-        else:
-            self.stdout.write(self.style.ERROR(f'❌ Motor de BD no soportado: {engine}'))
-            return
-        
-        # Si se solicita envío por email
-        if options['send_email'] and backup_path:
-            self.send_backup_email(backup_path)
-    
-    def backup_postgresql(self, db_config, backup_dir, keep_days):
-        """Hacer backup de PostgreSQL usando pg_dump"""
-        
-        # Obtener credenciales
-        db_name = db_config.get('NAME', '')
-        db_user = db_config.get('USER', '')
-        db_password = db_config.get('PASSWORD', '')
-        db_host = db_config.get('HOST', 'localhost')
-        db_port = db_config.get('PORT', '5432')
-        
-        if not db_name or not db_user:
-            self.stdout.write(
-                self.style.ERROR('❌ Credenciales de BD incompletas en DATABASE_URL')
-            )
-            return None
-        
-        # Timestamp para el nombre del backup
+        self.stdout.write(self.style.SUCCESS('\n🔄 Iniciando backup de base de datos...\n'))
+
+        # Crear carpeta backups si no existe
+        backups_dir = 'backups'
+        if not os.path.exists(backups_dir):
+            os.makedirs(backups_dir)
+            self.stdout.write(self.style.SUCCESS(f"✅ Carpeta '{backups_dir}' creada"))
+
+        # Generar nombre del archivo con timestamp
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        backup_name = f'backup_{timestamp}.sql'
-        backup_path = backup_dir / backup_name
-        
+        backup_filename = f'backup_{timestamp}.json'
+        backup_path = os.path.join(backups_dir, backup_filename)
+        backup_gz_path = f'{backup_path}.gz'
+
         try:
-            self.stdout.write('📦 Creando backup de PostgreSQL...')
+            # 1. EXPORTAR CON DUMPDATA
+            self.stdout.write(self.style.WARNING('📦 Exportando datos con dumpdata...'))
             
-            # Preparar variables de entorno para pg_dump
-            env = os.environ.copy()
-            if db_password:
-                env['PGPASSWORD'] = db_password
-            
-            # Ejecutar pg_dump
-            with open(backup_path, 'w') as backup_file:
-                subprocess.run(
-                    [
-                        'pg_dump',
-                        '-h', db_host,
-                        '-p', str(db_port),
-                        '-U', db_user,
-                        '-v',  # verbose
-                        db_name
-                    ],
-                    stdout=backup_file,
-                    stderr=subprocess.PIPE,
-                    env=env,
-                    check=True,
-                    timeout=300  # 5 minutos máximo
-                )
-            
-            # Verificar que se creó correctamente
-            if backup_path.exists():
-                size_mb = backup_path.stat().st_size / (1024 * 1024)
-                self.stdout.write(
-                    self.style.SUCCESS(
-                        f'✅ Backup PostgreSQL creado: {backup_name} ({size_mb:.2f} MB)\n'
-                    )
-                )
-                logger.info(f'PostgreSQL backup created: {backup_name} ({size_mb:.2f} MB)')
-                return backup_path
-            else:
-                self.stdout.write(self.style.ERROR('❌ Error al crear el backup'))
-                return None
-            
-        except subprocess.CalledProcessError as e:
-            self.stdout.write(
-                self.style.ERROR(f'❌ Error al ejecutar pg_dump: {str(e)}')
+            # Usar StringIO para capturar la salida
+            json_output = StringIO()
+            call_command(
+                'dumpdata',
+                '--indent=2',
+                '--exclude=contenttypes',
+                '--exclude=auth.permission',
+                stdout=json_output
             )
-            logger.error(f'pg_dump error: {str(e)}')
-            return None
-        except FileNotFoundError:
-            self.stdout.write(
-                self.style.ERROR(
-                    '❌ pg_dump no encontrado. Instala PostgreSQL client tools.'
-                )
-            )
-            logger.error('pg_dump not found')
-            return None
+            json_data = json_output.getvalue()
+            
+            self.stdout.write(self.style.SUCCESS(f'✅ Datos exportados ({len(json_data)} bytes)'))
+
+            # 2. COMPRIMIR EN .GZ
+            self.stdout.write(self.style.WARNING('📂 Comprimiendo archivo...'))
+            with gzip.open(backup_gz_path, 'wt', encoding='utf-8') as gz_file:
+                gz_file.write(json_data)
+            
+            file_size = os.path.getsize(backup_gz_path)
+            self.stdout.write(self.style.SUCCESS(f'✅ Archivo comprimido: {backup_gz_path} ({file_size} bytes)'))
+
+            # 3. ENVIAR POR EMAIL (OPCIONAL)
+            if options['send_email']:
+                self.stdout.write(self.style.WARNING('📧 Enviando por email...'))
+                self._send_backup_email(backup_gz_path, backup_filename)
+                self.stdout.write(self.style.SUCCESS('✅ Email enviado exitosamente'))
+                
+                # Borrar archivo después de enviarlo
+                os.remove(backup_gz_path)
+                self.stdout.write(self.style.SUCCESS(f'🗑️  Archivo eliminado del servidor'))
+
+            # 4. LIMPIAR BACKUPS ANTIGUOS (>7 DÍAS)
+            self.stdout.write(self.style.WARNING('🧹 Limpiando backups antiguos...'))
+            self._cleanup_old_backups(backups_dir)
+
+            self.stdout.write(self.style.SUCCESS('\n✅ Backup completado exitosamente\n'))
+
         except Exception as e:
-            self.stdout.write(
-                self.style.ERROR(f'❌ Error al crear backup: {str(e)}')
+            self.stdout.write(self.style.ERROR(f'\n❌ Error durante el backup: {str(e)}\n'))
+            raise
+
+    def _send_backup_email(self, backup_gz_path, backup_filename):
+        """
+        Envía el archivo de backup por email
+        """
+        recipient_email = 'giulianodanielzulatto@gmail.com'
+        
+        # Crear mensaje
+        subject = f'🔒 Backup de BD Lino Saludable - {datetime.now().strftime("%Y-%m-%d %H:%M")}'
+        body = f"""
+Hola,
+
+Se adjunta el backup automático de la base de datos de Lino Saludable.
+
+Detalles:
+- Archivo: {backup_filename}
+- Fecha: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+- Formato: JSON comprimido en .gz
+- Excluye: contenttypes, auth.permission
+
+Para restaurar:
+1. Descomprimir el archivo: gunzip backup_YYYYMMDD_HHMMSS.json.gz
+2. Ejecutar: python manage.py loaddata backup_YYYYMMDD_HHMMSS.json
+
+--
+Sistema de Respaldos - Lino Saludable
+"""
+        
+        email = EmailMessage(
+            subject=subject,
+            body=body,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            to=[recipient_email]
+        )
+        
+        # Adjuntar el archivo comprimido
+        with open(backup_gz_path, 'rb') as attachment:
+            email.attach(
+                backup_filename + '.gz',
+                attachment.read(),
+                'application/gzip'
             )
-            logger.error(f'Backup error: {str(e)}')
-            return None
-        finally:
-            # Limpiar backups antiguos al final
-            self.cleanup_old_backups(backup_dir, keep_days)
-    
-    def backup_sqlite(self, db_config, backup_dir, keep_days):
-        """Hacer backup de SQLite copiando el archivo"""
         
-        db_path = Path(db_config.get('NAME', ''))
-        
-        if not db_path.exists():
-            self.stdout.write(self.style.ERROR('❌ No se encontró la base de datos SQLite'))
-            return None
-        
-        # Timestamp para el nombre del backup
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        backup_name = f'backup_{timestamp}.sqlite3'
-        backup_path = backup_dir / backup_name
-        
-        try:
-            # Crear backup
-            self.stdout.write('📦 Creando backup de SQLite...')
-            shutil.copy2(db_path, backup_path)
-            
-            # Verificar que se creó correctamente
-            if backup_path.exists():
-                size_mb = backup_path.stat().st_size / (1024 * 1024)
-                self.stdout.write(
-                    self.style.SUCCESS(
-                        f'✅ Backup SQLite creado: {backup_name} ({size_mb:.2f} MB)\n'
-                    )
-                )
-                logger.info(f'SQLite backup created: {backup_name} ({size_mb:.2f} MB)')
-                return backup_path
-            else:
-                self.stdout.write(self.style.ERROR('❌ Error al crear el backup'))
-                return None
-            
-        except Exception as e:
-            self.stdout.write(
-                self.style.ERROR(f'❌ Error al crear backup: {str(e)}')
-            )
-            logger.error(f'SQLite backup error: {str(e)}')
-            return None
-        finally:
-            # Limpiar backups antiguos al final
-            self.cleanup_old_backups(backup_dir, keep_days)
-    
-    def send_backup_email(self, backup_path):
-        """Comprime y envía el backup por email"""
-        
-        # Verificar que email esté configurado
-        if not getattr(settings, 'USE_EMAIL', False) or not settings.EMAIL_HOST_USER:
-            self.stdout.write(
-                self.style.WARNING('⚠️  Email no configurado. Backup guardado localmente.')
-            )
+        # Enviar
+        email.send(fail_silently=False)
+
+    def _cleanup_old_backups(self, backups_dir):
+        """
+        Elimina backups más antiguos de 7 días
+        """
+        if not os.path.exists(backups_dir):
             return
         
-        self.stdout.write('📧 Preparando email con backup comprimido...')
-        
-        try:
-            # Comprimir el backup
-            backup_name = backup_path.name
-            compressed_name = f'{backup_name}.gz'
-            compressed_path = backup_path.parent / compressed_name
-            
-            with open(backup_path, 'rb') as f_in:
-                with gzip.open(compressed_path, 'wb') as f_out:
-                    f_out.writelines(f_in)
-            
-            if compressed_path.exists():
-                compressed_size_mb = compressed_path.stat().st_size / (1024 * 1024)
-                self.stdout.write(
-                    self.style.SUCCESS(
-                        f'✅ Backup comprimido: {compressed_name} ({compressed_size_mb:.2f} MB)'
-                    )
-                )
-            else:
-                self.stdout.write(self.style.ERROR('❌ Error al comprimir el backup'))
-                return
-            
-            # Preparar email
-            today = datetime.now().strftime('%Y-%m-%d')
-            subject = f'[Lino Backup] {today} - ✅ Exitoso'
-            
-            message = f"""
-Backup automático de Lino Saludable
-
-📊 INFORMACIÓN DEL BACKUP:
-- Fecha: {today}
-- Archivo: {compressed_name}
-- Tamaño comprimido: {compressed_size_mb:.2f} MB
-- Archivo original: {backup_name}
-- Tipo: PostgreSQL
-
-📝 INSTRUCCIONES DE RESTAURO:
-1. Descarga el archivo adjunto
-2. Descomprime: gunzip {compressed_name}
-3. Restaura: psql -U usuario -d database < {backup_name}
-
-⚠️  Este email contiene información sensible de tu base de datos.
-Guárdalo de forma segura.
-
----
-Sistema Lino Saludable
-Respaldos automáticos
-"""
-            
-            # Crear email
-            email = EmailMessage(
-                subject=subject,
-                body=message,
-                from_email=settings.EMAIL_HOST_USER,
-                to=[settings.EMAIL_HOST_USER],  # Enviar al mismo email
-            )
-            
-            # Adjuntar archivo comprimido
-            with open(compressed_path, 'rb') as attachment:
-                email.attach(compressed_name, attachment.read(), 'application/gzip')
-            
-            # Enviar
-            email.send(fail_silently=False)
-            
-            self.stdout.write(
-                self.style.SUCCESS(
-                    f'✅ Email enviado a {settings.EMAIL_HOST_USER}\n'
-                )
-            )
-            logger.info(f'Backup email sent to {settings.EMAIL_HOST_USER}')
-            
-            # Limpiar archivo comprimido temporal después de enviar
-            compressed_path.unlink()
-            self.stdout.write(f'🧹 Archivo comprimido temporal eliminado')
-            
-        except Exception as e:
-            today = datetime.now().strftime('%Y-%m-%d')
-            subject = f'[Lino Backup] {today} - ❌ Error'
-            
-            error_message = f"""
-Hubo un error al intentar enviar el backup de Lino Saludable
-
-❌ ERROR: {str(e)}
-
-Contactar al administrador.
-"""
-            
-            email = EmailMessage(
-                subject=subject,
-                body=error_message,
-                from_email=settings.EMAIL_HOST_USER,
-                to=[settings.EMAIL_HOST_USER],
-            )
-            email.send(fail_silently=True)
-            
-            self.stdout.write(
-                self.style.ERROR(f'❌ Error al enviar email: {str(e)}')
-            )
-            logger.error(f'Backup email error: {str(e)}')
-    
-    def cleanup_old_backups(self, backup_dir, keep_days):
-        """Elimina backups más antiguos que keep_days"""
-        
-        self.stdout.write(f'🧹 Limpiando backups antiguos (manteniendo últimos {keep_days} días)...')
-        
-        # Fecha límite
-        cutoff_date = datetime.now() - timedelta(days=keep_days)
-        
-        # Listar todos los backups (solo .sql y .sqlite3, no .gz)
-        backup_files = list(backup_dir.glob('backup_*.sql')) + list(backup_dir.glob('backup_*.sqlite3'))
-        
-        if not backup_files:
-            self.stdout.write('   No hay backups para limpiar')
-            return
-        
+        cutoff_date = datetime.now() - timedelta(days=7)
         deleted_count = 0
-        kept_count = 0
         
-        for backup_file in backup_files:
-            # Obtener fecha del archivo
-            file_date = datetime.fromtimestamp(backup_file.stat().st_mtime)
-            
-            if file_date < cutoff_date:
-                try:
-                    backup_file.unlink()
-                    deleted_count += 1
-                    self.stdout.write(f'   🗑️  Eliminado: {backup_file.name}')
-                    logger.info(f'Deleted old backup: {backup_file.name}')
-                except Exception as e:
-                    self.stdout.write(
-                        self.style.WARNING(f'   ⚠️  No se pudo eliminar {backup_file.name}: {e}')
-                    )
-                    logger.warning(f'Failed to delete {backup_file.name}: {e}')
-            else:
-                kept_count += 1
+        for filename in os.listdir(backups_dir):
+            if filename.startswith('backup_') and filename.endswith('.json.gz'):
+                file_path = os.path.join(backups_dir, filename)
+                file_time = datetime.fromtimestamp(os.path.getmtime(file_path))
+                
+                if file_time < cutoff_date:
+                    try:
+                        os.remove(file_path)
+                        deleted_count += 1
+                        self.stdout.write(f'  🗑️  Eliminado: {filename}')
+                    except Exception as e:
+                        self.stdout.write(
+                            self.style.WARNING(f'  ⚠️  No se pudo eliminar {filename}: {str(e)}')
+                        )
         
-        # Resumen
-        self.stdout.write('')
-        if deleted_count > 0:
-            self.stdout.write(self.style.SUCCESS(f'✅ Eliminados {deleted_count} backups antiguos'))
-        if kept_count > 0:
-            self.stdout.write(f'📁 Mantenidos {kept_count} backups recientes')
-        
-        # Mostrar espacio total usado
-        total_size = sum(f.stat().st_size for f in backup_dir.glob('backup_*.*') if f.suffix in ['.sql', '.sqlite3'])
-        if total_size > 0:
-            total_size_mb = total_size / (1024 * 1024)
-            self.stdout.write(f'💾 Espacio total de backups: {total_size_mb:.2f} MB')
+        if deleted_count == 0:
+            self.stdout.write(f'  ✅ Sin backups antiguos para eliminar')
+        else:
+            self.stdout.write(
+                self.style.SUCCESS(f'✅ {deleted_count} backup(s) antiguo(s) eliminado(s)')
+            )
