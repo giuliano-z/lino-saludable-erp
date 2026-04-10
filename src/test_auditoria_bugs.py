@@ -46,7 +46,7 @@ def test_ventas_eliminadas_no_aparecen():
     if not producto:
         producto = Producto.objects.create(
             nombre="Producto Test",
-            precio_venta=100,
+            precio=100,
             stock=100  # Stock suficiente para tests
         )
     else:
@@ -114,6 +114,8 @@ def test_stock_negativo_productos():
     print_header("TEST 2: Stock Negativo en Productos")
     
     user = User.objects.first()
+    if not user:
+        user = User.objects.create_user(username='testuser', password='test123')
     producto = Producto.objects.first()
     
     if not producto:

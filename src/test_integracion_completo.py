@@ -74,6 +74,8 @@ def test_vistas_cargan():
     print_header("TEST 2: Carga de Vistas")
     
     user = User.objects.first()
+    if not user:
+        user = User.objects.create_user(username='testuser', password='test123')
     client = Client()
     client.force_login(user)
     
@@ -137,6 +139,8 @@ def test_crear_ajuste_producto():
     print_header("TEST 3: Crear Ajuste de Producto (con actualización de stock)")
     
     user = User.objects.first()
+    if not user:
+        user = User.objects.create_user(username='testuser', password='test123')
     client = Client()
     client.force_login(user)
     
@@ -193,6 +197,8 @@ def test_crear_ajuste_mp():
     print_header("TEST 4: Crear Ajuste de Materia Prima (con actualización de stock)")
     
     user = User.objects.first()
+    if not user:
+        user = User.objects.create_user(username='testuser', password='test123')
     client = Client()
     client.force_login(user)
     

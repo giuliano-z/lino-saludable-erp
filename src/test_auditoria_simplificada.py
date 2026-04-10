@@ -89,7 +89,7 @@ def test_compra_actualiza_stock_mp():
     if not mp:
         mp = MateriaPrima.objects.create(
             nombre="MP Test",
-            precio_unitario=10,
+            costo_unitario=10,
             stock_actual=20,
             unidad_medida="kg"
         )

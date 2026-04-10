@@ -48,9 +48,16 @@ def test_eliminar_compra_nueva_restaura_stock():
     stock_inicial = mp.stock_actual
     print(f"📦 Stock inicial MP: {stock_inicial} kg")
     
+    # Crear usuario para la compra
+    from django.contrib.auth.models import User
+    user = User.objects.first()
+    if not user:
+        user = User.objects.create_user(username='testuser_compra', password='test123')
+    
     # Crear compra con CompraDetalle (sistema nuevo)
     compra = Compra.objects.create(
         proveedor="Proveedor Test",
+        usuario=user,
         total=500
     )
     
@@ -153,10 +160,17 @@ def test_eliminar_compra_legacy_restaura_stock():
     stock_inicial = mp.stock_actual
     print(f"📦 Stock inicial MP: {stock_inicial} kg")
     
+    # Crear usuario para la compra
+    from django.contrib.auth.models import User
+    user = User.objects.first()
+    if not user:
+        user = User.objects.create_user(username='testuser_legacy', password='test123')
+    
     # Crear compra legacy (campos directos, sin CompraDetalle)
     cantidad_comprada = Decimal('30')
     compra_legacy = Compra.objects.create(
         proveedor="Proveedor Legacy",
+        usuario=user,
         materia_prima=mp,
         cantidad_mayoreo=cantidad_comprada,
         precio_unitario_mayoreo=15,
@@ -264,9 +278,16 @@ def test_eliminar_compra_multiples_items():
     print(f"   MP2: {stocks_iniciales['mp2']} l")
     print(f"   MP3: {stocks_iniciales['mp3']} unidades")
     
+    # Crear usuario para la compra
+    from django.contrib.auth.models import User
+    user = User.objects.first()
+    if not user:
+        user = User.objects.create_user(username='testuser_multi', password='test123')
+    
     # Crear compra con 3 items
     compra = Compra.objects.create(
         proveedor="Proveedor Multi",
+        usuario=user,
         total=1250
     )
     
