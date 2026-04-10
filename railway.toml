@@ -8,3 +8,7 @@ restartPolicyMaxRetries = 10
 
 [build.nixpacksSettings]
 python = "3.13"
+
+[[crons]]
+schedule = "0 3 * * *"
+command = "cd /app/src && python manage.py backup_db --send-email"
