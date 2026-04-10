@@ -65,6 +65,9 @@ Thumbs.db
 _archive/
 _cleanup_backup_*/
 src/backups/
+backups/*.sql
+backups/*.gz
+backups/*.dump
 src/logs/
 *.bak
 *.backup
@@ -73,6 +76,7 @@ src/logs/
 # Documentation archives (mantener docs principales)
 docs/archive/
 docs/testing/  # Testing guides - local only, not for production
+docs/BACKUP_INSTRUCTIONS.md  # Local-only backup instructions
 
 # Redis
 dump.rdb
