@@ -10,18 +10,18 @@ from django.utils import timezone
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 from django.views.decorators.csrf import csrf_exempt
 from django.core.paginator import Paginator
-from decimal import Decimal
 from .models import Producto, Venta, Compra, MateriaPrima, ProductoMateriaPrima, MovimientoMateriaPrima, PerfilUsuario, VentaDetalle, LoteMateriaPrima, Receta, RecetaMateriaPrima, AjusteInventario
 from .forms import ProductoForm, VentaForm, VentaDetalleFormSet, CompraForm, MateriaPrimaForm, ProductoMateriaPrimaForm, MovimientoMateriaPrimaForm, VentaConMateriasForm, BusquedaMateriaPrimaForm, RecetaForm, AjusteProductoForm, AjusteMateriaPrimaForm
 from .resources import ProductoResource, VentaResource
 from django.contrib.auth.models import User
 from django.db.models import Sum, Count, Q, F
-from django.utils import timezone
 from datetime import timedelta, datetime
 import json
 from django.views.generic import TemplateView
 from django_ratelimit.decorators import ratelimit
 from django.conf import settings
+# 🔧 CORREGIDO: Eliminados imports duplicados (Decimal y timezone)
+# y mantuvimos models porque se usa para models.Sum, models.Count, models.F
 
 # ==================== IMPORTS PARA LOGGING ROBUSTO ====================
 from .logging_system import LinoLogger, log_business_operation, get_request_info
@@ -89,7 +89,6 @@ def procesar_ingredientes_receta(post_data, receta):
         
         index += 1
 
-@login_required
 @login_required
 def editar_receta(request, pk):
     """Vista para editar una receta existente."""
@@ -3252,12 +3251,16 @@ def crear_venta_v3(request):
                         subtotal=item['subtotal']
                     )
                     
-                    # 🔧 FIX BUG #1: Descuento de stock ahora SOLO aquí (signal desactivado)
-                    # Usar F() expression para evitar race conditions en concurrencia
+                    # Descuento de stock del producto
                     from django.db.models import F
                     Producto.objects.filter(id=item['producto'].id).update(
                         stock=F('stock') - item['cantidad']
                     )
+                    
+                    # 🔧 FIX BUG-A (NUEVO): Descontar ingredientes si el producto tiene receta
+                    # Ya fue validado arriba, así que sabemos que hay stock
+                    if item['producto'].tiene_receta and item['producto'].receta:
+                        item['producto'].descontar_materias_primas(item['cantidad'], request.user)
                 
                 # Recalcular total de la venta (antes lo hacía el signal)
                 venta.calcular_total()

@@ -72,6 +72,7 @@ src/logs/
 
 # Documentation archives (mantener docs principales)
 docs/archive/
+docs/testing/  # Testing guides - local only, not for production
 
 # Redis
 dump.rdb

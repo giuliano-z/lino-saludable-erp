@@ -652,10 +652,72 @@ class Producto(models.Model):
         # Si llega hasta aquí, algo está mal configurado
         return False, [{'error': 'Tipo de producto no reconocido o mal configurado'}]
 
+    def verificar_stock_ingredientes(self, cantidad):
+        """
+        🔍 VALIDACIÓN PREVIA: Verifica que hay stock suficiente de TODOS los ingredientes.
+        
+        IMPORTANTE: Solo VALIDA, NO descuenta nada. Usado ANTES de abrir transaction.
+        
+        Args:
+            cantidad: Cantidad de producto a vender/producir
+            
+        Raises:
+            ValueError: Si algún ingrediente no tiene stock suficiente
+            
+        Ejemplo:
+            try:
+                producto.verificar_stock_ingredientes(5)
+            except ValueError as e:
+                # Handle "Stock insuficiente de 'Almendra': se necesitan 2.5kg, hay 1kg"
+                pass
+        """
+        from decimal import Decimal
+        
+        # Para productos con receta
+        if self.tipo_producto == 'receta' and self.receta:
+            cantidad = Decimal(str(cantidad))
+            
+            for ingrediente in self.receta.recetamateriaprima_set.all():
+                materia = ingrediente.materia_prima
+                necesaria = ingrediente.cantidad * cantidad
+                
+                # ✅ Validación: Verificar stock suficiente
+                if materia.stock_actual < necesaria:
+                    raise ValueError(
+                        f"❌ Stock insuficiente de '{materia.nombre}': "
+                        f"se necesitan {necesaria}{materia.unidad_medida}, "
+                        f"hay {materia.stock_actual}{materia.unidad_medida}"
+                    )
+        
+        # Para productos de fraccionamiento o reventa
+        elif self.tipo_producto in ['fraccionamiento', 'reventa']:
+            if self.materia_prima_asociada:
+                cantidad = Decimal(str(cantidad))
+                materia = self.materia_prima_asociada
+                necesaria = cantidad * (self.cantidad_fraccion or Decimal('1'))
+                
+                # ✅ Validación: Verificar stock suficiente
+                if materia.stock_actual < necesaria:
+                    raise ValueError(
+                        f"❌ Stock insuficiente de '{materia.nombre}': "
+                        f"se necesitan {necesaria}{materia.unidad_medida}, "
+                        f"hay {materia.stock_actual}{materia.unidad_medida}"
+                    )
+
     def descontar_materias_primas(self, cantidad, usuario):
         """
         Descuenta del stock de materias primas lo necesario para producir 'cantidad' unidades de este producto.
-        Registra movimientos de inventario.
+        
+        ⚠️ IMPORTANTE: Debe ser llamado DENTRO de transaction.atomic() para rollback automático si hay error.
+        
+        ALGORITMO DE DOS FASES:
+        1️⃣ VALIDACIÓN: Verifica stock de TODOS los ingredientes (sin modificar BD)
+        2️⃣ DESCUENTO: Solo descuenta si TODOS pasaron validación
+        
+        Registra movimientos de inventario de cada ingrediente descargado.
+        
+        Raises:
+            ValueError: Si algún ingrediente tiene stock insuficiente
         """
         from .models import MovimientoMateriaPrima
         from decimal import Decimal
@@ -666,13 +728,39 @@ class Producto(models.Model):
         # Para productos con receta
         if self.tipo_producto == 'receta':
             if self.receta:
-                # Descontar ingredientes de la receta
+                # 🔍 FASE 1: VALIDACIÓN - Verificar stock de TODOS los ingredientes ANTES de descontar
+                # Si alguno falla, lanzar excepción SIN modificar BD
+                ingredientes_a_procesar = []
+                
                 for ingrediente in self.receta.recetamateriaprima_set.all():
                     materia = ingrediente.materia_prima
                     necesaria = ingrediente.cantidad * cantidad
-                    stock_anterior = materia.stock_actual
+                    
+                    # ✅ VALIDACIÓN: Verificar stock suficiente
+                    if materia.stock_actual < necesaria:
+                        raise ValueError(
+                            f"❌ Stock insuficiente de '{materia.nombre}': "
+                            f"se necesitan {necesaria}{materia.unidad_medida}, "
+                            f"hay {materia.stock_actual}{materia.unidad_medida}"
+                        )
+                    
+                    # Si pasa validación, guardar para procesar después
+                    ingredientes_a_procesar.append({
+                        'ingrediente': ingrediente,
+                        'materia': materia,
+                        'necesaria': necesaria,
+                        'stock_anterior': materia.stock_actual
+                    })
+                
+                # 🔽 FASE 2: DESCUENTO - Solo si TODOS los ingredientes pasaron validación
+                for item in ingredientes_a_procesar:
+                    materia = item['materia']
+                    necesaria = item['necesaria']
+                    stock_anterior = item['stock_anterior']
+                    
                     materia.stock_actual -= necesaria
                     materia.save()
+                    
                     MovimientoMateriaPrima.objects.create(
                         materia_prima=materia,
                         tipo_movimiento='produccion',
@@ -688,9 +776,20 @@ class Producto(models.Model):
             if self.materia_prima_asociada:
                 materia = self.materia_prima_asociada
                 necesaria = cantidad * (self.cantidad_fraccion or Decimal('1'))
+                
+                # ✅ VALIDACIÓN: Verificar stock suficiente
+                if materia.stock_actual < necesaria:
+                    raise ValueError(
+                        f"❌ Stock insuficiente de '{materia.nombre}': "
+                        f"se necesitan {necesaria}{materia.unidad_medida}, "
+                        f"hay {materia.stock_actual}{materia.unidad_medida}"
+                    )
+                
+                # ✅ DESCUENTO: Si pasó validación
                 stock_anterior = materia.stock_actual
                 materia.stock_actual -= necesaria
                 materia.save()
+                
                 MovimientoMateriaPrima.objects.create(
                     materia_prima=materia,
                     tipo_movimiento='fraccionamiento',
