@@ -179,7 +179,7 @@ def test_eliminar_compra_legacy_restaura_stock():
     )
     
     # Simular que la compra aumentó el stock (normalmente lo haría un signal)
-    mp.stock_actual += cantidad_comprada
+    mp.stock_actual += float(cantidad_comprada)
     mp.save()
     
     mp.refresh_from_db()
