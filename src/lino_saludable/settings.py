@@ -16,8 +16,6 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DEBUG = os.environ.get('DEBUG', 'True') == 'True'
 
 # SECURITY WARNING: keep the secret key used in production secret!
-# 🔒 CORREGIDO: SECRET_KEY debe estar en .env. Sin fallback inseguro.
-# Si falta en producción, Django lanzará error explícitamente (más seguro que usar una clave débil)
 SECRET_KEY = os.environ.get('SECRET_KEY')
 if not SECRET_KEY and not DEBUG:
     raise ValueError("SECRET_KEY environment variable is required in production")
@@ -28,6 +26,22 @@ ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', '127.0.0.1,localhost,testserver'
 CSRF_TRUSTED_ORIGINS = [
     f'https://{host}' for host in ALLOWED_HOSTS if host not in ['127.0.0.1', 'localhost', 'testserver']
 ]
+
+# ============================================
+# 🔒 SECURITY HEADERS (solo producción)
+# ============================================
+if not DEBUG:
+    SECURE_SSL_REDIRECT = True
+    SECURE_HSTS_SECONDS = 31536000
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SESSION_COOKIE_SECURE = True
+    SESSION_COOKIE_HTTPONLY = True
+    CSRF_COOKIE_SECURE = True
+
+X_FRAME_OPTIONS = 'DENY'
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_BROWSER_XSS_FILTER = True
 
 # Railway proxy configuration
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
@@ -57,18 +71,20 @@ INSTALLED_APPS = [
     'import_export',
     'chartjs',
     'widget_tweaks',
+    'axes',
     # 'django_ratelimit',  # Deshabilitado en desarrollo (habilitar en producción)
 ]
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
-    'whitenoise.middleware.WhiteNoiseMiddleware',  # WhiteNoise debe ir después de SecurityMiddleware
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'axes.middleware.AxesMiddleware',
 ]
 
 ROOT_URLCONF = 'lino_saludable.urls'
@@ -117,6 +133,8 @@ else:
 
 AUTHENTICATION_BACKENDS = [
     'django.contrib.auth.backends.ModelBackend',
+    'axes.backends.AxesStandaloneBackend',
+    'django.contrib.auth.backends.ModelBackend',
 ]
 
 # Password validation
@@ -150,7 +168,6 @@ USE_I18N = True
 USE_TZ = True
 
 
-# Static files (CSS, JavaScript, Images)
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
@@ -208,10 +225,10 @@ CACHES = {
 # }
 
 # Límites específicos (aplicables solo cuando RATELIMIT_ENABLE=True)
-RATELIMIT_LOGIN = '5/m'  # 5 intentos de login por minuto
-RATELIMIT_VENTAS = '30/h'  # 30 ventas por hora
-RATELIMIT_COMPRAS = '20/h'  # 20 compras por hora
-RATELIMIT_PRODUCTOS = '50/h'  # 50 productos creados/editados por hora
+RATELIMIT_LOGIN = '5/m'  
+RATELIMIT_VENTAS = '30/h'  
+RATELIMIT_COMPRAS = '20/h'  
+RATELIMIT_PRODUCTOS = '50/h'  
 
 # ============================================================
 # 📝 LOGGING - Para ver errores en Railway
@@ -269,3 +286,11 @@ DEFAULT_FROM_EMAIL = os.getenv('EMAIL_HOST_USER', '')
 
 # Flag para modo offline (desarrollo sin email)
 USE_EMAIL = bool(EMAIL_HOST_USER)
+
+# ============================================
+# 🔒 DJANGO-AXES (Rate limiting login)
+# ============================================
+AXES_FAILURE_LIMIT = 5          # Bloquea tras 5 intentos fallidos
+AXES_COOLOFF_TIME = 1           # Bloqueo de 1 hora
+AXES_LOCKOUT_CALLABLE = None    # Usa comportamiento default
+AXES_RESET_ON_SUCCESS = True    # Resetea contador al login exitoso
