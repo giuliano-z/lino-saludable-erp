@@ -338,11 +338,29 @@ class ProductoForm(forms.ModelForm):
 
 ## Formulario para la cabecera de la venta
 class VentaForm(forms.ModelForm):
+    # Campo de fecha validado en servidor - NO depender solo de input HTML
+    fecha = forms.DateField(
+        required=True,
+        label='Fecha de Venta',
+        widget=forms.DateInput(attrs={
+            'class': 'form-control',
+            'type': 'date'
+        }),
+        help_text='Selecciona la fecha en que se realizó la venta'
+    )
+    
     class Meta:
         model = Venta
-        fields = ['cliente']
+        fields = ['cliente', 'fecha']
         widgets = {
-            'cliente': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Nombre del cliente (opcional)'}),
+            'cliente': forms.TextInput(attrs={
+                'class': 'form-control', 
+                'placeholder': 'Nombre del cliente (opcional)'
+            }),
+            'fecha': forms.DateInput(attrs={
+                'class': 'form-control',
+                'type': 'date'
+            }),
         }
 
 ## Formulario para cada producto en la venta
@@ -374,6 +392,11 @@ class VentaDetalleForm(forms.ModelForm):
         cleaned_data = super().clean()
         producto = cleaned_data.get('producto')
         cantidad = cleaned_data.get('cantidad')
+        
+        # Validar que cantidad sea positiva
+        if cantidad is not None and cantidad <= 0:
+            raise forms.ValidationError('La cantidad debe ser mayor a 0')
+        
         if producto and cantidad:
             if cantidad > producto.stock:
                 raise forms.ValidationError(

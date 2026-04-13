@@ -161,7 +161,7 @@ body {
 
                         <!-- Buttons -->
                         <div class="lino-wizard-actions" style="margin-top: 2.5rem; padding-top: 2rem; border-top: 2px solid var(--lino-gray-200);">
-                            <a href="{% url 'gestion:lista_compras_migrado' %}" class="lino-btn lino-btn-ghost">
+                            <a href="{% url 'gestion:lista_compras' %}" class="lino-btn lino-btn-ghost">
                                 <i class="bi bi-x-circle"></i> Cancelar
                             </a>
                             <button type="submit" class="lino-btn lino-btn-primary lino-btn-lg" id="btnSubmit">
@@ -197,13 +197,13 @@ body {
                         <i class="bi bi-lightning-fill" style="color: #f59e0b;"></i> Acciones Rápidas
                     </h6>
                     <div class="d-grid gap-2">
-                        <a href="{% url 'gestion:lista_compras_migrado' %}" class="lino-btn lino-btn-ghost" style="justify-content: flex-start;">
+                        <a href="{% url 'gestion:lista_compras' %}" class="lino-btn lino-btn-ghost" style="justify-content: flex-start;">
                             <i class="bi bi-list-ul"></i> Ver Compras
                         </a>
-                        <a href="{% url 'gestion:lista_materias_primas_migrado' %}" class="lino-btn lino-btn-ghost" style="justify-content: flex-start;">
+                        <a href="{% url 'gestion:lista_materias_primas' %}" class="lino-btn lino-btn-ghost" style="justify-content: flex-start;">
                             <i class="bi bi-box-seam"></i> Materias Primas
                         </a>
-                        <a href="{% url 'gestion:crear_materia_prima_migrado' %}" class="lino-btn lino-btn-ghost" style="justify-content: flex-start;">
+                        <a href="{% url 'gestion:crear_materia_prima' %}" class="lino-btn lino-btn-ghost" style="justify-content: flex-start;">
                             <i class="bi bi-plus-circle"></i> Nueva Materia Prima
                         </a>
                     </div>

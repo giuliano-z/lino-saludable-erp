@@ -130,7 +130,7 @@
                 {% lino_card_header "Acciones Rápidas" "bi-lightning-charge" "warning" %}
                 <div class="lino-card-content">
                     <div class="d-grid gap-2">
-                        {% lino_btn "Nueva Materia Prima" "{% url 'gestion:crear_materia_prima_migrado' %}" "primary" "lg" "bi-plus-circle" %}
+                        {% lino_btn "Nueva Materia Prima" "{% url 'gestion:crear_materia_prima' %}" "primary" "lg" "bi-plus-circle" %}
                         {% lino_btn "Reporte de Stock" "{% url 'gestion:reporte_stock_materias_primas' %}" "earth" "md" "bi-file-text" %}
                         {% lino_btn "Exportar Excel" "{% url 'gestion:exportar_materias_primas_excel' %}" "olive" "md" "bi-download" %}
                     </div>
@@ -233,7 +233,7 @@
                     {% lino_icon "bi-box2" "display-1 text-muted mb-3" %}
                     <h5 class="text-muted">No hay materias primas registradas</h5>
                     <p class="text-muted mb-4">Comienza agregando tu primera materia prima</p>
-                    {% lino_btn "Agregar Materia Prima" "{% url 'gestion:crear_materia_prima_migrado' %}" "primary" "lg" "bi-plus-circle" %}
+                    {% lino_btn "Agregar Materia Prima" "{% url 'gestion:crear_materia_prima' %}" "primary" "lg" "bi-plus-circle" %}
                 </div>
             {% endif %}
         </div>
