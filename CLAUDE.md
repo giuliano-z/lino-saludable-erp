@@ -2,6 +2,16 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## ⚠️ ADVERTENCIA CRÍTICA: ESTO ES PRODUCCIÓN REAL
+
+**Cualquier push a `main` se despliega automáticamente en Railway (producción).**
+
+- La base de datos PostgreSQL tiene 1800+ transacciones reales de clientes reales.
+- No hay entorno de staging — local (SQLite) y producción (PostgreSQL) son los únicos entornos.
+- Antes de cualquier operación que afecte datos o despliegue, confirmar explícitamente con el usuario.
+- **NUNCA** hacer `git push` sin pedir confirmación explícita al usuario.
+- **NUNCA** correr formatters (`ruff --fix`, `black`, `isort`) automáticamente sin avisar — generan decenas de cambios de formato que ensucian el historial git.
+
 ## Project Overview
 
 Lino Saludable is a Django-based business management system for a nuts and healthy products shop. It tracks sales, purchases, inventory, raw materials, recipes, and profitability. The production database has 1800+ transactions on Railway (PostgreSQL); local development uses SQLite.
@@ -104,3 +114,27 @@ Defined in [railway.toml](railway.toml). Start sequence: `migrate` → `createus
 ## Environment Variables
 
 See `.env.example` for the full list. Required for production: `SECRET_KEY`, `DATABASE_URL`, `ALLOWED_HOSTS`. Optional: `EMAIL_*` (SMTP), `REDIS_URL`.
+
+## Trabajo Pendiente (en curso)
+
+### Mejoras al sistema de backups — iniciado en sesión abril 2026
+Archivo: [backup_db.py](src/gestion/management/commands/backup_db.py)
+
+Cambios acordados pero **aún no implementados ni commiteados**:
+1. Reemplazar email hardcodeado por variable de entorno `BACKUP_EMAIL_RECIPIENT`
+2. Agregar `import logging` y `logger = logging.getLogger(__name__)`
+3. Agregar validación clara si el email no está configurado
+4. Agregar logs en 5 puntos clave: inicio, export, compress, send, cleanup
+5. Agregar `settings.py` → variable `BACKUP_EMAIL_RECIPIENT = os.getenv("BACKUP_EMAIL_RECIPIENT", "")`
+6. Documentar nueva variable en `.env.example`
+
+Estado: los archivos del proyecto tienen ~60 archivos con cambios de formato (ruff) sin commitear. Resolver eso antes de implementar las mejoras de backup.
+
+## Qué NO hacer
+
+- **No correr `ruff --fix`, `black`, ni `isort` automáticamente** — si hay que formatear, avisar primero y hacerlo en un commit separado dedicado solo a formato.
+- **No crear migraciones sin mostrarlas completas primero** — siempre mostrar el archivo generado antes de aplicarlo.
+- **No hacer `git push` sin confirmación explícita** — cada push despliega en producción.
+- **No modificar `signals.py`** sin leer los comentarios del archivo — los signals están desactivados intencionalmente para evitar duplicados.
+- **No usar `python manage.py flush`** — destruye todos los datos de producción.
+- **No instalar dependencias nuevas** sin avisar primero al usuario.

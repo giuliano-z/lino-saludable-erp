@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(python manage.py flush*)",
+      "Bash(python manage.py migrate --fake*)",
+      "Bash(python manage.py migrate --run-syncdb*)",
+      "Bash(python manage.py reset_production*)",
+      "Bash(python manage.py limpiar_datos*)",
+      "Bash(rm -rf*)",
+      "Bash(dropdb*)",
+      "Bash(psql*DROP*)",
+      "Bash(ruff*--fix*)",
+      "Bash(black*)",
+      "Bash(isort*)",
+      "Bash(git push*)"
+    ]
+  }
+}

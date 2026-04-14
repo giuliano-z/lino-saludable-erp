@@ -92,5 +92,8 @@ package-lock.json
 # Temporary
 *.tmp
 *.temp
-.cache/CLAUDE.local.md
+.cache/
 .env.save
+
+# Claude Code (privado, no commitear)
+CLAUDE.local.md
