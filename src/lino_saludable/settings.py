@@ -284,6 +284,10 @@ EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
 EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
 DEFAULT_FROM_EMAIL = os.getenv('EMAIL_HOST_USER', '')
 
+# Destinatario de backups automáticos (configurable por cliente/instancia)
+# En producción: definir BACKUP_EMAIL_RECIPIENT en las variables de entorno de Railway
+BACKUP_EMAIL_RECIPIENT = os.getenv('BACKUP_EMAIL_RECIPIENT', '')
+
 # Flag para modo offline (desarrollo sin email)
 USE_EMAIL = bool(EMAIL_HOST_USER)
 

@@ -7,6 +7,7 @@ Limpia backups antiguos (>7 días)
 """
 
 import gzip
+import logging
 import os
 from datetime import datetime, timedelta
 from io import StringIO
@@ -15,6 +16,8 @@ from django.conf import settings
 from django.core.mail import EmailMessage
 from django.core.management import call_command
 from django.core.management.base import BaseCommand
+
+logger = logging.getLogger(__name__)
 
 
 class Command(BaseCommand):
@@ -29,6 +32,7 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        logger.info("Iniciando backup de base de datos")
         self.stdout.write(self.style.SUCCESS('\n🔄 Iniciando backup de base de datos...\n'))
 
         # Crear carpeta backups si no existe
@@ -58,6 +62,7 @@ class Command(BaseCommand):
             )
             json_data = json_output.getvalue()
 
+            logger.info("Datos exportados: %d bytes", len(json_data))
             self.stdout.write(self.style.SUCCESS(f'✅ Datos exportados ({len(json_data)} bytes)'))
 
             # 2. COMPRIMIR EN .GZ
@@ -66,34 +71,52 @@ class Command(BaseCommand):
                 gz_file.write(json_data)
 
             file_size = os.path.getsize(backup_gz_path)
+            logger.info("Archivo comprimido: %s (%d bytes)", backup_gz_path, file_size)
             self.stdout.write(self.style.SUCCESS(f'✅ Archivo comprimido: {backup_gz_path} ({file_size} bytes)'))
 
             # 3. ENVIAR POR EMAIL (OPCIONAL)
             if options['send_email']:
-                self.stdout.write(self.style.WARNING('📧 Enviando por email...'))
-                self._send_backup_email(backup_gz_path, backup_filename)
-                self.stdout.write(self.style.SUCCESS('✅ Email enviado exitosamente'))
+                recipient = getattr(settings, 'BACKUP_EMAIL_RECIPIENT', '')
+                if not recipient:
+                    logger.warning("BACKUP_EMAIL_RECIPIENT no configurado — omitiendo envío de email")
+                    self.stdout.write(self.style.WARNING(
+                        '⚠️  BACKUP_EMAIL_RECIPIENT no configurado. Backup guardado localmente sin enviar.'
+                    ))
+                else:
+                    self.stdout.write(self.style.WARNING(f'📧 Enviando backup a {recipient}...'))
+                    try:
+                        self._send_backup_email(backup_gz_path, backup_filename, recipient)
+                        logger.info("Backup enviado por email a %s", recipient)
+                        self.stdout.write(self.style.SUCCESS(f'✅ Email enviado a {recipient}'))
 
-                # Borrar archivo después de enviarlo
-                os.remove(backup_gz_path)
-                self.stdout.write(self.style.SUCCESS('🗑️  Archivo eliminado del servidor'))
+                        # Borrar archivo después de enviarlo
+                        os.remove(backup_gz_path)
+                        logger.info("Archivo local eliminado tras envío exitoso")
+                        self.stdout.write(self.style.SUCCESS('🗑️  Archivo eliminado del servidor'))
+                    except Exception as email_error:
+                        logger.error("Error al enviar backup por email: %s", str(email_error), exc_info=True)
+                        self.stdout.write(self.style.ERROR(
+                            f'❌ Error al enviar email: {str(email_error)}\n'
+                            f'   El archivo de backup sigue en: {backup_gz_path}'
+                        ))
 
             # 4. LIMPIAR BACKUPS ANTIGUOS (>7 DÍAS)
             self.stdout.write(self.style.WARNING('🧹 Limpiando backups antiguos...'))
             self._cleanup_old_backups(backups_dir)
 
+            logger.info("Backup completado exitosamente")
             self.stdout.write(self.style.SUCCESS('\n✅ Backup completado exitosamente\n'))
 
         except Exception as e:
+            logger.error("Backup fallido: %s", str(e), exc_info=True)
             self.stdout.write(self.style.ERROR(f'\n❌ Error durante el backup: {str(e)}\n'))
             raise
 
-    def _send_backup_email(self, backup_gz_path, backup_filename):
+    def _send_backup_email(self, backup_gz_path, backup_filename, recipient_email):
         """
-        Envía el archivo de backup por email
+        Envía el archivo de backup por email al destinatario configurado.
+        El email se define con la variable de entorno BACKUP_EMAIL_RECIPIENT en settings.py.
         """
-        recipient_email = 'giulianodanielzulatto@gmail.com'
-
         # Crear mensaje
         subject = f'🔒 Backup de BD Lino Saludable - {datetime.now().strftime("%Y-%m-%d %H:%M")}'
         body = f"""
@@ -161,6 +184,7 @@ Sistema de Respaldos - Lino Saludable
         if deleted_count == 0:
             self.stdout.write('  ✅ Sin backups antiguos para eliminar')
         else:
+            logger.info("Limpieza: %d backup(s) antiguo(s) eliminado(s)", deleted_count)
             self.stdout.write(
                 self.style.SUCCESS(f'✅ {deleted_count} backup(s) antiguo(s) eliminado(s)')
             )

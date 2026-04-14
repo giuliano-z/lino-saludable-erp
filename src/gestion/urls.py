@@ -1,6 +1,7 @@
 from django.urls import path
 
 from . import views
+from .api import api_inventario, api_productos, api_ventas
 from .views_compras import (
     api_costo_receta,
     crear_compra,
@@ -104,9 +105,9 @@ urlpatterns = [
     path('api/productos/<int:pk>/precio/', views.producto_precio, name='producto_precio'),
     path('api/verificar-stock/<int:producto_id>/', views.api_verificar_stock_producto, name='api_verificar_stock_producto'),
     path('api/receta/<int:pk>/costo/', api_costo_receta, name='api_costo_receta'),
-    path('api/productos/', views.api_productos, name='api_productos'),
-    path('api/inventario/', views.api_inventario, name='api_inventario'),
-    path('api/ventas/', views.api_ventas, name='api_ventas'),
+    path('api/productos/', api_productos, name='api_productos'),
+    path('api/inventario/', api_inventario, name='api_inventario'),
+    path('api/ventas/', api_ventas, name='api_ventas'),
 
     # ==================== CONFIGURACIÓN ====================
     path('gastos-inversiones/', views.gastos_inversiones, name='gastos_inversiones'),
