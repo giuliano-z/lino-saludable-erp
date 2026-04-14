@@ -342,7 +342,7 @@ class Producto(models.Model):
 
     nombre = models.CharField(max_length=100)
     descripcion = models.TextField(blank=True)
-    precio = models.FloatField(default=0, validators=[MinValueValidator(0)])
+    precio = models.DecimalField(max_digits=10, decimal_places=2, default=0, validators=[MinValueValidator(0)])
     stock = models.IntegerField(default=0, validators=[MinValueValidator(0)])
     categoria = models.CharField(
         max_length=50,
@@ -1038,7 +1038,7 @@ class Producto(models.Model):
         self.precio_venta_calculado = nuevo_precio
 
         if self.actualizar_precio_automatico:
-            self.precio = float(self.precio_venta_calculado)
+            self.precio = self.precio_venta_calculado
 
         if guardar:
             self.save()
@@ -1056,17 +1056,25 @@ class Producto(models.Model):
         # Si actualizar_precio_automatico está activado y hay precio_venta_calculado,
         # sincronizar con el campo precio para compatibilidad
         if self.actualizar_precio_automatico and self.precio_venta_calculado:
-            # Redondear el precio para que sea más práctico
-            self.precio = round(float(self.precio_venta_calculado))
+            # Redondear el precio para que sea más práctico (al peso entero más cercano)
+            self.precio = self.precio_venta_calculado.quantize(Decimal('1'))
         elif self.precio_venta_calculado and not hasattr(self, '_skip_price_sync'):
             # Si no hay precio manual establecido, usar el calculado
             if not self.precio or self.precio == 0:
-                self.precio = round(float(self.precio_venta_calculado))
+                self.precio = self.precio_venta_calculado.quantize(Decimal('1'))
 
         super().save(*args, **kwargs)
 
     def __str__(self):
         return self.nombre
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(stock__gte=0),
+                name='producto_stock_no_negativo',
+            ),
+        ]
 
 
 class Compra(models.Model):
@@ -1327,6 +1335,12 @@ class MateriaPrima(models.Model):
         permissions = [
             ('can_manage_materias_primas', 'Puede gestionar materias primas'),
             ('can_view_stock_reports', 'Puede ver reportes de stock'),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(stock_actual__gte=0),
+                name='mp_stock_no_negativo',
+            ),
         ]
 
     def __str__(self):
