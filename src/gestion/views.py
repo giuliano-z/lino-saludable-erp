@@ -1029,7 +1029,6 @@ def detalle_producto(request, pk):
     return render(request, 'modules/productos/detalle.html', context)
 
 @login_required
-@login_required
 @ratelimit(key='user', rate=getattr(settings, 'RATELIMIT_PRODUCTOS', '50/h'), method='POST', block=True)
 def editar_producto(request, pk):
     producto = get_object_or_404(Producto, pk=pk)
@@ -1141,7 +1140,6 @@ def eliminar_producto(request, pk):
 
     return render(request, 'modules/productos/confirmar_eliminacion_producto.html', context)
 
-@login_required
 @login_required
 def lista_ventas(request):
     """Vista de lista de ventas con KPIs LINO V3"""
@@ -1370,7 +1368,6 @@ def crear_venta(request):
     })
 
 @login_required
-@login_required
 def eliminar_venta(request, pk):
     """🔒 ELIMINACIÓN SEGURA CON SOFT DELETE - ARQUITECTURA DB PROFESIONAL"""
     venta = get_object_or_404(Venta, pk=pk, eliminada=False)  # Solo ventas activas
@@ -1433,7 +1430,6 @@ def eliminar_venta(request, pk):
     }
     return render(request, 'modules/ventas/confirmar_eliminacion_venta.html', context)
 
-@login_required
 @login_required
 def detalle_venta(request, pk):
     venta = get_object_or_404(Venta, pk=pk)

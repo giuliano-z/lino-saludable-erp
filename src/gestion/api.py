@@ -1,11 +1,13 @@
 from datetime import datetime
 
+from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET
 
 from .models import MateriaPrima, Producto, Venta
 
 
+@login_required
 @require_GET
 def producto_precio(request, pk):
     try:
@@ -19,80 +21,85 @@ def producto_precio(request, pk):
     except Producto.DoesNotExist:
         return JsonResponse({'error': 'Producto no encontrado'}, status=404)
 
+
+@login_required
 @require_GET
 def api_productos(request):
     """API para sincronización de productos"""
     try:
         productos = Producto.objects.all()
-        data = []
-        for producto in productos:
-            data.append({
-                'id': producto.id,
-                'nombre': producto.nombre,
-                'precio': float(producto.precio),
-                'stock': producto.stock,
-                'descripcion': producto.descripcion or '',
-                'updated_at': producto.id  # Simular timestamp
-            })
-
+        data = [
+            {
+                'id': p.id,
+                'nombre': p.nombre,
+                'precio': float(p.precio),
+                'stock': p.stock,
+                'descripcion': p.descripcion or '',
+                'updated_at': p.fecha_creacion.isoformat(),
+            }
+            for p in productos
+        ]
         return JsonResponse({
             'status': 'success',
             'data': data,
             'count': len(data),
-            'last_updated': datetime.now().isoformat()
+            'last_updated': datetime.now().isoformat(),
         })
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
 
+
+@login_required
 @require_GET
 def api_inventario(request):
     """API para sincronización de inventario/materias primas"""
     try:
         materias_primas = MateriaPrima.objects.all()
-        data = []
-        for materia in materias_primas:
-            data.append({
-                'id': materia.id,
-                'nombre': materia.nombre,
-                'stock_actual': float(materia.stock_actual),
-                'stock_minimo': float(materia.stock_minimo),
-                'unidad_medida': materia.unidad_medida,
-                'costo_unitario': float(materia.costo_unitario),
-                'proveedor': materia.proveedor or '',
-                'updated_at': materia.id
-            })
-
+        data = [
+            {
+                'id': m.id,
+                'nombre': m.nombre,
+                'stock_actual': float(m.stock_actual),
+                'stock_minimo': float(m.stock_minimo),
+                'unidad_medida': m.unidad_medida,
+                'costo_unitario': float(m.costo_unitario),
+                'proveedor': m.proveedor or '',
+                'updated_at': m.fecha_creacion.isoformat(),
+            }
+            for m in materias_primas
+        ]
         return JsonResponse({
             'status': 'success',
             'data': data,
             'count': len(data),
-            'last_updated': datetime.now().isoformat()
+            'last_updated': datetime.now().isoformat(),
         })
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
 
+
+@login_required
 @require_GET
 def api_ventas(request):
-    """API para sincronización de ventas"""
+    """API para sincronización de ventas — últimas 100"""
     try:
-        # Últimas 100 ventas para no saturar
-        ventas = Venta.objects.all().order_by('-fecha')[:100]
-        data = []
-        for venta in ventas:
-            data.append({
-                'id': venta.id,
-                'fecha': venta.fecha.isoformat(),
-                'total': float(venta.total),
-                'cliente': venta.cliente or '',
-                'items_count': venta.detalles.count(),
-                'updated_at': venta.id
-            })
-
+        ventas = Venta.objects.order_by('-fecha')[:100]
+        data = [
+            {
+                'id': v.id,
+                'fecha': v.fecha.isoformat(),
+                'total': float(v.total),
+                'cliente': v.cliente or '',
+                'items_count': v.detalles.count(),
+                'updated_at': v.fecha.isoformat(),
+            }
+            for v in ventas
+        ]
         return JsonResponse({
             'status': 'success',
             'data': data,
             'count': len(data),
-            'last_updated': datetime.now().isoformat()
+            'last_updated': datetime.now().isoformat(),
         })
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
