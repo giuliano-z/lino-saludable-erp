@@ -1,0 +1,11 @@
+.env
+.env.*
+*.pem
+__pycache__/
+*.pyc
+venv/
+staticfiles/
+media/
+*.log
+docs/
+backups/
