@@ -50,7 +50,7 @@ def total_cantidad(detalles):
     """Template filter para calcular la cantidad total de productos vendidos."""
     try:
         return sum(detalle.cantidad for detalle in detalles)
-    except:
+    except (TypeError, AttributeError):
         return 0
 
 # ===== NUEVO SISTEMA LINO COMPONENTS =====

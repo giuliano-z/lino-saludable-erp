@@ -1,9 +1,12 @@
+import logging
 from decimal import Decimal
 
 from django.contrib.auth.models import User
 from django.core.validators import MinValueValidator
 from django.db import models
 from django.utils import timezone
+
+logger = logging.getLogger(__name__)
 
 
 # ==================== CUSTOM MANAGERS ====================
@@ -426,7 +429,8 @@ class Producto(models.Model):
             # CON RECETA: sumar costo de todos los ingredientes
             try:
                 return self.receta.costo_total()
-            except:
+            except Exception as e:
+                logger.warning("Error calculando costo de receta para producto '%s' (id=%s): %s", self, self.pk, e)
                 return Decimal('0.00')
 
         elif self.materia_prima_asociada and self.cantidad_fraccion:
@@ -979,8 +983,8 @@ class Producto(models.Model):
                 es_fraccionamiento = self.tipo_producto == 'fraccionamiento'
                 costos_indirectos = config.calcular_costos_indirectos(peso_kg, es_fraccionamiento)
                 costo_base += costos_indirectos
-        except:
-            pass  # Si no hay configuración, continuar sin costos indirectos
+        except Exception as e:
+            logger.warning("Error calculando costos indirectos para producto '%s' (id=%s): %s", self, self.pk, e)
 
         return costo_base
 
@@ -998,8 +1002,8 @@ class Producto(models.Model):
                 if config and config.redondear_precios:
                     # Redondear al peso más cercano (múltiplo de 50 centavos)
                     precio = (precio / Decimal('0.50')).quantize(Decimal('1')) * Decimal('0.50')
-            except:
-                pass
+            except Exception as e:
+                logger.warning("Error redondeando precio para producto '%s' (id=%s): %s", self, self.pk, e)
 
             return precio.quantize(Decimal('0.01'))
         return Decimal('0.00')
@@ -1403,8 +1407,8 @@ class MateriaPrima(models.Model):
                 config = ConfiguracionCostos.objects.first()
                 if config and config.actualizar_automaticamente:
                     self.actualizar_productos_relacionados()
-            except:
-                pass  # Si no hay configuración, no hacer nada
+            except Exception as e:
+                logger.error("Error actualizando productos relacionados para materia prima '%s' (id=%s): %s", self, self.pk, e)
 
     def crear_historial_manual(self, usuario, motivo="Cambio manual"):
         """🔍 Método para crear historial manualmente."""

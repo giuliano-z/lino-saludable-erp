@@ -88,7 +88,7 @@ class Command(BaseCommand):
                 try:
                     content = html_file.read_text(encoding='utf-8')
                     count += content.count(f'{{% {component}')
-                except:
+                except (OSError, UnicodeDecodeError):
                     continue
 
             component_usage[component] = {

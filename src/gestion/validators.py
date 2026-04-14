@@ -2,7 +2,7 @@
 Sistema de validaciones robustas para LINO SALUDABLE
 Previene errores críticos en operaciones de dinero y stock
 """
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, List, Tuple
 
 from django.core.exceptions import ValidationError
@@ -286,5 +286,5 @@ def limpiar_decimal(valor) -> Decimal:
     """Convierte un valor a Decimal de forma segura"""
     try:
         return Decimal(str(valor))
-    except:
+    except (InvalidOperation, ValueError):
         return Decimal('0.00')

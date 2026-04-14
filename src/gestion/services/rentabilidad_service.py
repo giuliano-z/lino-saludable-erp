@@ -3,10 +3,13 @@ Servicio de Rentabilidad - Sistema de Análisis de Márgenes y Objetivos
 Proporciona métricas avanzadas de rentabilidad y recomendaciones automáticas
 """
 
+import logging
 from decimal import ROUND_HALF_UP, Decimal
 
 from django.db.models import Sum
 from django.utils import timezone
+
+logger = logging.getLogger(__name__)
 
 from gestion.models import ConfiguracionCostos, Producto, VentaDetalle
 
@@ -83,8 +86,8 @@ class RentabilidadService:
                 suma_margenes_ponderados += margen * ventas_mes
                 suma_ventas_ponderacion += ventas_mes
 
-            except Exception:
-                # Si hay error calculando un producto, continuar
+            except Exception as e:
+                logger.warning("Error calculando rentabilidad para producto '%s' (id=%s): %s", producto, producto.pk, e)
                 continue
 
         # Calcular porcentajes y margen promedio ponderado
