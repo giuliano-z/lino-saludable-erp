@@ -16,23 +16,26 @@ Uso:
     python manage.py reset_production --dry-run
 """
 
+from django.contrib.auth.models import User
 from django.core.management.base import BaseCommand
 from django.db import transaction
-from django.contrib.auth.models import User
+
 from gestion.models import (
-    Venta, VentaDetalle,
-    Compra, CompraDetalle,
-    LoteMateriaPrima,
+    AjusteInventario,
     Alerta,
-    Producto,
-    MateriaPrima,
-    MovimientoMateriaPrima,
+    Compra,
+    CompraDetalle,
     HistorialCosto,
     HistorialPreciosMateriaPrima,
-    AjusteInventario,
+    LoteMateriaPrima,
+    MateriaPrima,
+    MovimientoMateriaPrima,
+    Producto,
     ProductoMateriaPrima,
     Receta,
-    RecetaMateriaPrima
+    RecetaMateriaPrima,
+    Venta,
+    VentaDetalle,
 )
 
 
@@ -80,7 +83,7 @@ class Command(BaseCommand):
 
         # Usuarios que se mantendrán
         USUARIOS_A_MANTENER = ['sister_emprendedora', 'el_super_creador']
-        
+
         self.stdout.write(self.style.SUCCESS('✅ USUARIOS QUE SE MANTENDRÁN:'))
         usuarios_existentes = User.objects.filter(username__in=USUARIOS_A_MANTENER)
         for user in usuarios_existentes:
@@ -89,7 +92,7 @@ class Command(BaseCommand):
 
         # Contar registros actuales
         counts = self.count_records()
-        
+
         # Mostrar reporte
         self.stdout.write(self.style.WARNING('📊 REGISTROS A ELIMINAR:'))
         self.stdout.write('')
@@ -108,7 +111,7 @@ class Command(BaseCommand):
         self.stdout.write(f"   ❌ Ajustes: {counts['ajustes']}")
         self.stdout.write(f"   ❌ Usuarios (excepto los 2 principales): {counts['otros_usuarios']}")
         self.stdout.write('')
-        
+
         total_eliminar = sum([
             counts['ventas'], counts['venta_detalles'],
             counts['compras'], counts['compra_detalles'],
@@ -139,9 +142,9 @@ class Command(BaseCommand):
         self.stdout.write(self.style.ERROR('⚠️  Esto afectará la base de datos de PRODUCCIÓN en Railway'))
         self.stdout.write('=' * 70)
         self.stdout.write('')
-        
+
         confirmacion = input('¿Estás 100% seguro? Escribe "RESETEAR PRODUCCION" para continuar: ')
-        
+
         if confirmacion != 'RESETEAR PRODUCCION':
             self.stdout.write(self.style.ERROR('❌ Operación cancelada'))
             return
@@ -161,18 +164,18 @@ class Command(BaseCommand):
             self.stdout.write(self.style.SUCCESS('✅ RESET DE PRODUCCIÓN COMPLETADO'))
             self.stdout.write('=' * 70)
             self.stdout.write('')
-            
+
             self.stdout.write(self.style.SUCCESS('📊 REGISTROS ELIMINADOS:'))
             for key, value in deleted_counts.items():
                 self.stdout.write(f"   ✓ {key}: {value}")
             self.stdout.write('')
-            
+
             self.stdout.write(self.style.SUCCESS('👥 USUARIOS ACTIVOS:'))
             usuarios_finales = User.objects.all()
             for user in usuarios_finales:
                 self.stdout.write(f"   ✓ {user.username} - {user.email}")
             self.stdout.write('')
-            
+
             self.stdout.write('=' * 70)
             self.stdout.write(self.style.SUCCESS('🎯 SISTEMA LISTO PARA EMPEZAR DE CERO'))
             self.stdout.write('')
@@ -192,7 +195,7 @@ class Command(BaseCommand):
     def count_records(self):
         """Cuenta todos los registros relevantes"""
         USUARIOS_A_MANTENER = ['sister_emprendedora', 'el_super_creador']
-        
+
         return {
             'ventas': Venta.objects.count(),
             'venta_detalles': VentaDetalle.objects.count(),
@@ -242,7 +245,7 @@ class Command(BaseCommand):
         self.stdout.write('   🗑️  Eliminando historiales...')
         hc, _ = HistorialCosto.objects.all().delete()
         deleted['Historial costos'] = hc
-        
+
         hp, _ = HistorialPreciosMateriaPrima.objects.all().delete()
         deleted['Historial precios'] = hp
 

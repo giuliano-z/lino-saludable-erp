@@ -1,5 +1,5 @@
-from django.core.management.base import BaseCommand
 from django.contrib.auth.models import User
+from django.core.management.base import BaseCommand
 
 
 class Command(BaseCommand):
@@ -9,7 +9,7 @@ class Command(BaseCommand):
         self.stdout.write(self.style.WARNING('=' * 60))
         self.stdout.write(self.style.WARNING('🔑 RESETEANDO CONTRASEÑAS'))
         self.stdout.write(self.style.WARNING('=' * 60))
-        
+
         # Resetear contraseña de sister_emprendedora
         try:
             user1 = User.objects.get(username='sister_emprendedora')

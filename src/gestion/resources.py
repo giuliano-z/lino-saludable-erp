@@ -1,5 +1,7 @@
 from import_export import resources
+
 from .models import Producto, Venta, VentaDetalle
+
 
 class ProductoResource(resources.ModelResource):
     class Meta:

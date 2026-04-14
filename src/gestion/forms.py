@@ -1,9 +1,19 @@
 
 from django import forms
-from .models import (
-    Producto, Venta, Compra, MateriaPrima, ProductoMateriaPrima, MovimientoMateriaPrima, PerfilUsuario, VentaDetalle, Receta, AjusteInventario
-)
 from django.forms import inlineformset_factory
+
+from .models import (
+    AjusteInventario,
+    Compra,
+    MateriaPrima,
+    MovimientoMateriaPrima,
+    PerfilUsuario,
+    Producto,
+    ProductoMateriaPrima,
+    Receta,
+    Venta,
+    VentaDetalle,
+)
 
 
 # Formulario placeholder para registrar ventas con verificación de materias primas
@@ -14,7 +24,7 @@ class VentaConMateriasForm(forms.Form):
 
 
 class ProductoForm(forms.ModelForm):
-    
+
     # Campo adicional para nueva categoría
     nueva_categoria = forms.CharField(
         required=False,
@@ -26,7 +36,7 @@ class ProductoForm(forms.ModelForm):
             'style': 'display: none;'  # Inicialmente oculto
         })
     )
-    
+
     # Campo adicional para producción desde materias primas
     cantidad_a_producir = forms.IntegerField(
         required=False,
@@ -76,7 +86,7 @@ class ProductoForm(forms.ModelForm):
                 'class': 'lino-input',
                 'placeholder': 'Origen del producto (opcional)'
             }),
-            
+
             # Tipo de producto
             'tiene_receta': forms.CheckboxInput(attrs={
                 'class': 'form-check-input',
@@ -98,7 +108,7 @@ class ProductoForm(forms.ModelForm):
                 'id': 'id_cantidad_fraccion'
             }),
             'tipo_producto': forms.HiddenInput(),  # Campo oculto, se calcula automáticamente
-            
+
             # Precio y stock
             'precio': forms.NumberInput(attrs={
                 'class': 'lino-input',
@@ -117,7 +127,7 @@ class ProductoForm(forms.ModelForm):
                 'min': '1',
                 'id': 'id_stock_minimo'
             }),
-            
+
             # Otros
             'atributos_dieteticos': forms.TextInput(attrs={
                 'class': 'lino-input',
@@ -151,54 +161,54 @@ class ProductoForm(forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        
+
         # Obtener todas las categorías disponibles
         from .models import Producto
-        
+
         # Categorías predefinidas
         categorias_predefinidas = list(Producto.CATEGORIAS_DIETETICA)
-        
+
         # Categorías dinámicas de la base de datos
         categorias_bd = Producto.objects.exclude(categoria__in=[cat[0] for cat in Producto.CATEGORIAS_DIETETICA]).values_list('categoria', flat=True).distinct()
         categorias_dinamicas = [(cat, cat) for cat in categorias_bd if cat and cat.strip()]
-        
+
         # Crear lista completa de opciones
         todas_categorias = categorias_predefinidas + categorias_dinamicas
-        
+
         # Configurar el widget del campo categoria
         self.fields['categoria'].widget.choices = todas_categorias
-        
+
         # Configurar el campo receta (sistema de costos)
         if 'receta' in self.fields:
             self.fields['receta'].queryset = Receta.objects.all()
             self.fields['receta'].required = False
             self.fields['receta'].empty_label = "Selecciona una receta"
-            
+
         # Configurar el campo materia_prima_asociada
         if 'materia_prima_asociada' in self.fields:
             self.fields['materia_prima_asociada'].queryset = MateriaPrima.objects.all()
             self.fields['materia_prima_asociada'].required = False
             self.fields['materia_prima_asociada'].empty_label = "Selecciona materia prima"
-            
+
         # Configurar el campo producto_origen (para fraccionamiento)
         if 'producto_origen' in self.fields:
             self.fields['producto_origen'].queryset = Producto.objects.exclude(tipo_producto='fraccionamiento')
             self.fields['producto_origen'].required = False
             self.fields['producto_origen'].empty_label = "Seleccionar producto origen"
-        
+
         # Configurar campos del sistema de costos
         if 'tipo_producto' in self.fields:
             self.fields['tipo_producto'].required = False  # Se calcula automáticamente en clean()
-            
+
         if 'costo_base' in self.fields:
             self.fields['costo_base'].required = False
-            
+
         if 'margen_ganancia' in self.fields:
             self.fields['margen_ganancia'].required = False
-            
+
         if 'precio_venta_calculado' in self.fields:
             self.fields['precio_venta_calculado'].required = False
-            
+
         # Hacer campos de fraccionamiento opcionales por defecto
         campos_fraccionamiento = ['unidad_compra', 'unidad_venta', 'factor_conversion', 'cantidad_origen', 'cantidad_fraccion']
         for campo in campos_fraccionamiento:
@@ -210,19 +220,19 @@ class ProductoForm(forms.ModelForm):
         categoria = cleaned_data.get('categoria')
         nueva_categoria = cleaned_data.get('nueva_categoria')
         tipo_producto = cleaned_data.get('tipo_producto')
-        
+
         # 🛡️ BUG-B FIX: Validación independiente de tiene_receta
         # Esta validación ocurre SIN importar el tipo_producto
         # Si el usuario marca "¿Usa receta?" DEBE seleccionar una receta
         tiene_receta = cleaned_data.get('tiene_receta')
         receta = cleaned_data.get('receta')
-        
+
         if tiene_receta and not receta:
             raise forms.ValidationError(
                 '❌ Si marca "¿Usa receta?" debe seleccionar una receta. '
                 'Si el producto NO usa receta, desmarca la opción.'
             )
-        
+
         # Si no se especificó tipo_producto, establecer valor por defecto basado en configuración
         if not tipo_producto:
             # Determinar tipo basado en si tiene receta o materia prima
@@ -233,21 +243,21 @@ class ProductoForm(forms.ModelForm):
             else:
                 cleaned_data['tipo_producto'] = 'reventa'  # Por defecto reventa
             tipo_producto = cleaned_data['tipo_producto']
-        
+
         # Si seleccionó "nueva" pero no escribió una nueva categoría
         if categoria == 'nueva':
             if not nueva_categoria:
                 raise forms.ValidationError('Debe escribir el nombre de la nueva categoría')
-            
+
             # Convertir a formato slug para coherencia
             nueva_cat_slug = nueva_categoria.lower().replace(' ', '_').replace('ñ', 'n')
             cleaned_data['categoria'] = nueva_cat_slug
-            
+
             # Verificar que no exista ya
             from .models import Producto
             if nueva_cat_slug in [choice[0] for choice in Producto.CATEGORIAS_DIETETICA]:
                 raise forms.ValidationError(f'La categoría "{nueva_categoria}" ya existe')
-        
+
         # Validaciones condicionales según el tipo de producto
         if tipo_producto:
             if tipo_producto == 'fraccionamiento':
@@ -260,27 +270,27 @@ class ProductoForm(forms.ModelForm):
                     raise forms.ValidationError('Para productos fraccionados debe especificar la unidad de compra')
                 if not cleaned_data.get('unidad_venta'):
                     raise forms.ValidationError('Para productos fraccionados debe especificar la unidad de venta')
-            
+
             elif tipo_producto == 'receta':
                 # Para recetas, validar que tenga receta asociada
                 if cleaned_data.get('tiene_receta') and not cleaned_data.get('receta'):
                     raise forms.ValidationError('Para productos con receta debe seleccionar una receta')
-            
+
             # Para todos los tipos, margen de ganancia es opcional pero si se especifica debe ser válido
             margen = cleaned_data.get('margen_ganancia')
             if margen is not None and margen < 0:
                 raise forms.ValidationError('El margen de ganancia no puede ser negativo')
-        
+
         # En edición, cantidad_a_producir puede ser vacía o 0
         if self.instance and self.instance.pk:
             cantidad = cleaned_data.get('cantidad_a_producir')
             if cantidad is not None and cantidad < 1:
                 cleaned_data['cantidad_a_producir'] = None
-        
+
         # ============================================================
         # 🛡️ VALIDADORES DE SEGURIDAD ROBUSTOS
         # ============================================================
-        
+
         # 1. Precio debe ser positivo
         precio = cleaned_data.get('precio')
         if precio is not None:
@@ -288,41 +298,41 @@ class ProductoForm(forms.ModelForm):
                 raise forms.ValidationError('El precio de venta debe ser mayor a 0')
             if precio > 999999:
                 raise forms.ValidationError('El precio de venta no puede exceder $999,999')
-        
+
         # 2. Stock debe ser no negativo
         stock = cleaned_data.get('stock')
         if stock is not None and stock < 0:
             raise forms.ValidationError('El stock no puede ser negativo')
-        
+
         # 3. Stock mínimo debe ser no negativo
         stock_min = cleaned_data.get('stock_minimo')
         if stock_min is not None and stock_min < 0:
             raise forms.ValidationError('El stock mínimo no puede ser negativo')
-        
+
         # 4. Cantidad de fracción debe ser positiva
         cant_fracc = cleaned_data.get('cantidad_fraccion')
         if cant_fracc is not None and cant_fracc <= 0:
             raise forms.ValidationError('La cantidad por unidad debe ser mayor a 0')
-        
+
         # 5. Límite de caracteres en campos de texto
         nombre = cleaned_data.get('nombre', '')
         if len(nombre) > 200:
             raise forms.ValidationError('El nombre no puede exceder 200 caracteres')
-        
+
         descripcion = cleaned_data.get('descripcion', '')
         if len(descripcion) > 1000:
             raise forms.ValidationError('La descripción no puede exceder 1000 caracteres')
-        
+
         # 6. Sanitizar caracteres peligrosos en nombre
         import re
         if nombre and not re.match(r'^[a-zA-Z0-9\s\-_áéíóúÁÉÍÓÚñÑ.,()%°]+$', nombre):
             raise forms.ValidationError('El nombre contiene caracteres no permitidos')
-                
+
         return cleaned_data
-    
+
     def save(self, commit=True):
         instance = super().save(commit=False)
-        
+
         # Establecer tipo_producto basado en la configuración
         if instance.tiene_receta and instance.receta:
             instance.tipo_producto = 'receta'
@@ -330,7 +340,7 @@ class ProductoForm(forms.ModelForm):
             instance.tipo_producto = 'reventa'  # Fraccionamiento/reventa
         else:
             instance.tipo_producto = 'reventa'  # Por defecto reventa
-        
+
         # El campo categoria ya viene procesado del clean()
         if commit:
             instance.save()
@@ -348,13 +358,13 @@ class VentaForm(forms.ModelForm):
         }),
         help_text='Selecciona la fecha en que se realizó la venta'
     )
-    
+
     class Meta:
         model = Venta
         fields = ['cliente', 'fecha']
         widgets = {
             'cliente': forms.TextInput(attrs={
-                'class': 'form-control', 
+                'class': 'form-control',
                 'placeholder': 'Nombre del cliente (opcional)'
             }),
             'fecha': forms.DateInput(attrs={
@@ -381,7 +391,7 @@ class VentaDetalleForm(forms.ModelForm):
         self.fields['producto'].queryset = Producto.objects.filter(
             stock__gt=0  # Solo productos con stock
         ).order_by('nombre')
-        
+
         # Mensaje de ayuda si no hay productos disponibles
         if not self.fields['producto'].queryset.exists():
             self.fields['producto'].empty_label = "No hay productos disponibles para venta"
@@ -392,11 +402,11 @@ class VentaDetalleForm(forms.ModelForm):
         cleaned_data = super().clean()
         producto = cleaned_data.get('producto')
         cantidad = cleaned_data.get('cantidad')
-        
+
         # Validar que cantidad sea positiva
         if cantidad is not None and cantidad <= 0:
             raise forms.ValidationError('La cantidad debe ser mayor a 0')
-        
+
         if producto and cantidad:
             if cantidad > producto.stock:
                 raise forms.ValidationError(
@@ -480,33 +490,33 @@ class CompraForm(forms.ModelForm):
         if precio and precio > 99999999:
             raise forms.ValidationError('El precio no puede exceder $99,999,999')
         return precio
-    
+
     def clean_proveedor(self):
         """Validar proveedor contra inyección"""
         proveedor = self.cleaned_data.get('proveedor', '')
         if len(proveedor) > 100:
             raise forms.ValidationError('El nombre del proveedor no puede exceder 100 caracteres')
-        
+
         import re
         if proveedor and not re.match(r'^[a-zA-Z0-9\s\-_áéíóúÁÉÍÓÚñÑ.,&()]+$', proveedor):
             raise forms.ValidationError('El nombre del proveedor contiene caracteres no permitidos')
-        
+
         return proveedor
 
 ## Formularios principales para materias primas, productos y movimientos
 
 class MateriaPrimaForm(forms.ModelForm):
     """Formulario para crear o editar materias primas."""
-    
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # Establecer activo=True por defecto al crear nueva materia prima
         if not self.instance.pk:  # Solo si es nuevo (no tiene ID)
             self.initial['activo'] = True
-    
+
     class Meta:
         model = MateriaPrima
-        fields = ['nombre', 'descripcion', 'unidad_medida', 'stock_actual', 
+        fields = ['nombre', 'descripcion', 'unidad_medida', 'stock_actual',
                  'stock_minimo', 'costo_unitario', 'proveedor', 'activo']
         widgets = {
             'nombre': forms.TextInput(attrs={'class': 'form-control'}),
@@ -604,7 +614,7 @@ class BusquedaMateriaPrimaForm(forms.Form):
 # ==================== FORMULARIO RECETA ====================
 class RecetaForm(forms.ModelForm):
     """Formulario para crear y editar recetas."""
-    
+
     class Meta:
         model = Receta
         fields = ['nombre', 'descripcion', 'productos', 'activa']
@@ -645,10 +655,10 @@ class RecetaForm(forms.ModelForm):
         self.fields['productos'].queryset = Producto.objects.filter(
             tiene_receta=True
         ).order_by('nombre')
-        
+
         # Hacer que el campo nombre sea requerido y único
         self.fields['nombre'].required = True
-        
+
         # Configurar valor por defecto para activa
         if not self.instance.pk:
             self.fields['activa'].initial = True
@@ -656,12 +666,12 @@ class RecetaForm(forms.ModelForm):
     def save(self, commit=True):
         """Guarda la receta y maneja las materias primas dinámicas."""
         receta = super().save(commit=commit)
-        
+
         if commit:
             # Aquí procesaremos los ingredientes dinámicos
             # Esta lógica se implementará en la vista
             pass
-            
+
         return receta
 
 
@@ -669,7 +679,7 @@ class RecetaForm(forms.ModelForm):
 
 class AjusteProductoForm(forms.ModelForm):
     """Formulario para ajustar stock de productos terminados."""
-    
+
     stock_nuevo = forms.DecimalField(
         label='Nuevo Stock',
         max_digits=10,
@@ -681,7 +691,7 @@ class AjusteProductoForm(forms.ModelForm):
             'min': '0'
         })
     )
-    
+
     class Meta:
         model = AjusteInventario
         fields = ['producto', 'stock_nuevo', 'tipo', 'razon']
@@ -699,15 +709,15 @@ class AjusteProductoForm(forms.ModelForm):
                 'placeholder': 'Ej: Conteo físico encontró 3 unidades más de lo registrado'
             })
         }
-    
+
     def __init__(self, *args, **kwargs):
         # Extraer producto_id si viene en kwargs
         producto_id = kwargs.pop('producto_id', None)
         super().__init__(*args, **kwargs)
-        
+
         # Ordenar productos por nombre
         self.fields['producto'].queryset = Producto.objects.all().order_by('nombre')
-        
+
         # Si viene producto_id, pre-seleccionar y ocultar el campo
         if producto_id:
             try:
@@ -717,37 +727,37 @@ class AjusteProductoForm(forms.ModelForm):
                 self.producto_preseleccionado = producto
             except Producto.DoesNotExist:
                 pass
-    
+
     def clean(self):
         cleaned_data = super().clean()
         producto = cleaned_data.get('producto')
         stock_nuevo = cleaned_data.get('stock_nuevo')
-        
+
         if producto and stock_nuevo is not None:
             # Guardar stock anterior para el save
             cleaned_data['stock_anterior'] = producto.stock
-            
+
         return cleaned_data
-    
+
     def save(self, commit=True):
         ajuste = super().save(commit=False)
-        
+
         # Establecer stock_anterior desde el producto
         if ajuste.producto:
             ajuste.stock_anterior = ajuste.producto.stock
-            
+
         if commit:
             ajuste.save()
             # Actualizar el stock del producto
             ajuste.producto.stock = ajuste.stock_nuevo
             ajuste.producto.save()
-            
+
         return ajuste
 
 
 class AjusteMateriaPrimaForm(forms.ModelForm):
     """Formulario para ajustar stock de materias primas."""
-    
+
     stock_nuevo = forms.DecimalField(
         label='Nuevo Stock',
         max_digits=10,
@@ -759,7 +769,7 @@ class AjusteMateriaPrimaForm(forms.ModelForm):
             'min': '0'
         })
     )
-    
+
     class Meta:
         model = AjusteInventario
         fields = ['materia_prima', 'stock_nuevo', 'tipo', 'razon']
@@ -777,17 +787,17 @@ class AjusteMateriaPrimaForm(forms.ModelForm):
                 'placeholder': 'Ej: Bolsa rota, se perdieron 2kg en almacén'
             })
         }
-    
+
     def __init__(self, *args, **kwargs):
         # Extraer materia_prima_id si viene en kwargs
         mp_id = kwargs.pop('materia_prima_id', None)
         super().__init__(*args, **kwargs)
-        
+
         # Ordenar materias primas por nombre, solo activas
         self.fields['materia_prima'].queryset = MateriaPrima.objects.filter(
             activo=True
         ).order_by('nombre')
-        
+
         # Si viene mp_id, pre-seleccionar
         if mp_id:
             try:
@@ -797,29 +807,29 @@ class AjusteMateriaPrimaForm(forms.ModelForm):
                 self.mp_preseleccionada = mp
             except MateriaPrima.DoesNotExist:
                 pass
-    
+
     def clean(self):
         cleaned_data = super().clean()
         materia_prima = cleaned_data.get('materia_prima')
         stock_nuevo = cleaned_data.get('stock_nuevo')
-        
+
         if materia_prima and stock_nuevo is not None:
             # Guardar stock anterior para el save
             cleaned_data['stock_anterior'] = materia_prima.stock_actual
-            
+
         return cleaned_data
-    
+
     def save(self, commit=True):
         ajuste = super().save(commit=False)
-        
+
         # Establecer stock_anterior desde la materia prima
         if ajuste.materia_prima:
             ajuste.stock_anterior = ajuste.materia_prima.stock_actual
-            
+
         if commit:
             ajuste.save()
             # Actualizar el stock de la materia prima
             ajuste.materia_prima.stock_actual = ajuste.stock_nuevo
             ajuste.materia_prima.save()
-            
+
         return ajuste

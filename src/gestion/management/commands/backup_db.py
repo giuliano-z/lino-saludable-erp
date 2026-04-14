@@ -6,16 +6,15 @@ Opcionalmente envía por email
 Limpia backups antiguos (>7 días)
 """
 
-import json
 import gzip
 import os
 from datetime import datetime, timedelta
 from io import StringIO
 
-from django.core.management.base import BaseCommand
-from django.core.management import call_command
-from django.core.mail import EmailMessage
 from django.conf import settings
+from django.core.mail import EmailMessage
+from django.core.management import call_command
+from django.core.management.base import BaseCommand
 
 
 class Command(BaseCommand):
@@ -47,7 +46,7 @@ class Command(BaseCommand):
         try:
             # 1. EXPORTAR CON DUMPDATA
             self.stdout.write(self.style.WARNING('📦 Exportando datos con dumpdata...'))
-            
+
             # Usar StringIO para capturar la salida
             json_output = StringIO()
             call_command(
@@ -58,14 +57,14 @@ class Command(BaseCommand):
                 stdout=json_output
             )
             json_data = json_output.getvalue()
-            
+
             self.stdout.write(self.style.SUCCESS(f'✅ Datos exportados ({len(json_data)} bytes)'))
 
             # 2. COMPRIMIR EN .GZ
             self.stdout.write(self.style.WARNING('📂 Comprimiendo archivo...'))
             with gzip.open(backup_gz_path, 'wt', encoding='utf-8') as gz_file:
                 gz_file.write(json_data)
-            
+
             file_size = os.path.getsize(backup_gz_path)
             self.stdout.write(self.style.SUCCESS(f'✅ Archivo comprimido: {backup_gz_path} ({file_size} bytes)'))
 
@@ -74,10 +73,10 @@ class Command(BaseCommand):
                 self.stdout.write(self.style.WARNING('📧 Enviando por email...'))
                 self._send_backup_email(backup_gz_path, backup_filename)
                 self.stdout.write(self.style.SUCCESS('✅ Email enviado exitosamente'))
-                
+
                 # Borrar archivo después de enviarlo
                 os.remove(backup_gz_path)
-                self.stdout.write(self.style.SUCCESS(f'🗑️  Archivo eliminado del servidor'))
+                self.stdout.write(self.style.SUCCESS('🗑️  Archivo eliminado del servidor'))
 
             # 4. LIMPIAR BACKUPS ANTIGUOS (>7 DÍAS)
             self.stdout.write(self.style.WARNING('🧹 Limpiando backups antiguos...'))
@@ -94,7 +93,7 @@ class Command(BaseCommand):
         Envía el archivo de backup por email
         """
         recipient_email = 'giulianodanielzulatto@gmail.com'
-        
+
         # Crear mensaje
         subject = f'🔒 Backup de BD Lino Saludable - {datetime.now().strftime("%Y-%m-%d %H:%M")}'
         body = f"""
@@ -115,14 +114,14 @@ Para restaurar:
 --
 Sistema de Respaldos - Lino Saludable
 """
-        
+
         email = EmailMessage(
             subject=subject,
             body=body,
             from_email=settings.DEFAULT_FROM_EMAIL,
             to=[recipient_email]
         )
-        
+
         # Adjuntar el archivo comprimido
         with open(backup_gz_path, 'rb') as attachment:
             email.attach(
@@ -130,7 +129,7 @@ Sistema de Respaldos - Lino Saludable
                 attachment.read(),
                 'application/gzip'
             )
-        
+
         # Enviar
         email.send(fail_silently=False)
 
@@ -140,15 +139,15 @@ Sistema de Respaldos - Lino Saludable
         """
         if not os.path.exists(backups_dir):
             return
-        
+
         cutoff_date = datetime.now() - timedelta(days=7)
         deleted_count = 0
-        
+
         for filename in os.listdir(backups_dir):
             if filename.startswith('backup_') and filename.endswith('.json.gz'):
                 file_path = os.path.join(backups_dir, filename)
                 file_time = datetime.fromtimestamp(os.path.getmtime(file_path))
-                
+
                 if file_time < cutoff_date:
                     try:
                         os.remove(file_path)
@@ -158,9 +157,9 @@ Sistema de Respaldos - Lino Saludable
                         self.stdout.write(
                             self.style.WARNING(f'  ⚠️  No se pudo eliminar {filename}: {str(e)}')
                         )
-        
+
         if deleted_count == 0:
-            self.stdout.write(f'  ✅ Sin backups antiguos para eliminar')
+            self.stdout.write('  ✅ Sin backups antiguos para eliminar')
         else:
             self.stdout.write(
                 self.style.SUCCESS(f'✅ {deleted_count} backup(s) antiguo(s) eliminado(s)')

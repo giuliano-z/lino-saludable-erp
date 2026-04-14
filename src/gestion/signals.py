@@ -8,14 +8,13 @@ Manejo automático de inventario y costos:
 - Actualización de ventas y stock al agregar/eliminar detalles
 """
 
-from django.db.models.signals import pre_save, post_save, post_delete
+from django.db.models.signals import post_delete
 from django.dispatch import receiver
-from decimal import Decimal
-from .models import Producto, Compra, MateriaPrima, VentaDetalle
 
+from .models import VentaDetalle
 
 # ==================== SIGNALS PARA PRODUCTOS ====================
-# 
+#
 # NOTA: Los signals de Producto están DESACTIVADOS porque ahora usamos
 # control manual explícito en las vistas:
 # - crear_producto: usa descontar_materias_primas() al crear con stock inicial
@@ -69,7 +68,7 @@ from .models import Producto, Compra, MateriaPrima, VentaDetalle
 # def actualizar_venta_al_agregar_detalle(sender, instance, created, **kwargs):
 #     """
 #     Signal DESACTIVADO - Ver nota arriba.
-#     
+#
 #     ORIGINAL: Al crear o modificar un detalle de venta:
 #     1. Descuenta stock del producto (solo al crear)
 #     2. Recalcula el total de la venta
@@ -79,7 +78,7 @@ from .models import Producto, Compra, MateriaPrima, VentaDetalle
 #         producto = instance.producto
 #         producto.stock -= instance.cantidad
 #         producto.save()
-#     
+#
 #     # Recalcular total de la venta
 #     instance.venta.calcular_total()
 
@@ -95,6 +94,6 @@ def actualizar_venta_al_eliminar_detalle(sender, instance, **kwargs):
     producto = instance.producto
     producto.stock += instance.cantidad
     producto.save()
-    
+
     # Recalcular total de la venta
     instance.venta.calcular_total()

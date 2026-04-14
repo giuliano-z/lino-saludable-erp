@@ -2,11 +2,18 @@
 Comando Django para limpiar TODA la base de datos y comenzar de cero
 Uso: python manage.py limpiar_datos
 """
-from django.core.management.base import BaseCommand
 from django.contrib.auth import get_user_model
+from django.core.management.base import BaseCommand
+
 from gestion.models import (
-    Producto, MateriaPrima, Compra, Venta, VentaDetalle, 
-    Receta, RecetaMateriaPrima, LoteMateriaPrima
+    Compra,
+    LoteMateriaPrima,
+    MateriaPrima,
+    Producto,
+    Receta,
+    RecetaMateriaPrima,
+    Venta,
+    VentaDetalle,
 )
 
 User = get_user_model()
@@ -86,7 +93,7 @@ class Command(BaseCommand):
             self.stdout.write(self.style.SUCCESS('✅ Materias primas eliminadas'))
 
             self.stdout.write(self.style.SUCCESS('\n✨ Base de datos limpiada exitosamente!\n'))
-            
+
             # Mostrar resumen
             self.stdout.write('📊 Datos eliminados:')
             for model, count in counts_before.items():

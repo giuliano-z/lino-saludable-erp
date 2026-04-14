@@ -1,10 +1,15 @@
-from django.core.management.base import BaseCommand
-from django.contrib.auth.models import User
-from gestion.models import (
-    MateriaPrima, Producto, Receta, RecetaMateriaPrima, 
-    ConfiguracionCostos
-)
 from decimal import Decimal
+
+from django.contrib.auth.models import User
+from django.core.management.base import BaseCommand
+
+from gestion.models import (
+    MateriaPrima,
+    Producto,
+    Receta,
+    RecetaMateriaPrima,
+)
+
 
 class Command(BaseCommand):
     help = 'Crea datos de ejemplo para probar el sistema de costos'
@@ -144,7 +149,7 @@ class Command(BaseCommand):
             aceite_fraccionado.cantidad_fraccion = Decimal('250.0')  # 250ml
             aceite_fraccionado.factor_conversion = Decimal('4.0')  # 4 unidades por litro
             aceite_fraccionado.save()
-            
+
             self.stdout.write("🔄 Configurado fraccionamiento de aceite de coco")
 
         # Crear receta para granola
@@ -164,11 +169,11 @@ class Command(BaseCommand):
                     'creador': user
                 }
             )
-            
+
             if created:
                 # Agregar el producto a la receta
                 receta.productos.add(granola)
-                
+
                 # Definir ingredientes para 500g de granola
                 ingredientes = [
                     ('Harina de Avena Orgánica', Decimal('0.300')),  # 300g
@@ -177,7 +182,7 @@ class Command(BaseCommand):
                     ('Nueces Pecanas', Decimal('0.100')),            # 100g
                     ('Cacao en Polvo', Decimal('0.030'))             # 30g
                 ]
-                
+
                 for nombre_mp, cantidad in ingredientes:
                     materia_prima = MateriaPrima.objects.filter(nombre__contains=nombre_mp.split()[0]).first()
                     if materia_prima:
@@ -190,7 +195,7 @@ class Command(BaseCommand):
                                 'notas': f'Para 500g de {granola.nombre}'
                             }
                         )
-                
+
                 self.stdout.write("📝 Creada receta para granola con 5 ingredientes")
 
         # Calcular costos iniciales
@@ -207,7 +212,7 @@ class Command(BaseCommand):
             costo = producto.calcular_costo_unitario()
             precio = producto.calcular_precio_venta()
             margen_real = ((precio - costo) / costo * 100) if costo > 0 else 0
-            
+
             self.stdout.write(
                 f"   • {producto.nombre}:\n"
                 f"     - Costo: ${costo:.2f}\n"

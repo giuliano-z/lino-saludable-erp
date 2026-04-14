@@ -3,14 +3,12 @@ Servicio de Rentabilidad - Sistema de Análisis de Márgenes y Objetivos
 Proporciona métricas avanzadas de rentabilidad y recomendaciones automáticas
 """
 
-from decimal import Decimal, ROUND_HALF_UP
-from django.db.models import Sum, Avg, F, Q
-from django.utils import timezone
-from datetime import timedelta
+from decimal import ROUND_HALF_UP, Decimal
 
-from gestion.models import (
-    Producto, VentaDetalle, Venta, ConfiguracionCostos
-)
+from django.db.models import Sum
+from django.utils import timezone
+
+from gestion.models import ConfiguracionCostos, Producto, VentaDetalle
 
 
 class RentabilidadService:
@@ -18,12 +16,12 @@ class RentabilidadService:
     Servicio centralizado para análisis de rentabilidad del negocio.
     Proporciona KPIs, análisis de objetivos y recomendaciones automáticas.
     """
-    
+
     def __init__(self):
         self.hoy = timezone.now().date()
         self.inicio_mes = self.hoy.replace(day=1)
         self._config = None  # Lazy loading de configuración
-    
+
     @property
     def config(self):
         """Lazy loading de configuración (singleton pattern)"""
@@ -37,7 +35,7 @@ class RentabilidadService:
                     cobertura_objetivo_dias=30
                 )
         return self._config
-    
+
     def get_kpis_rentabilidad(self):
         """
         Obtiene los 4 KPIs principales de rentabilidad.
@@ -48,66 +46,66 @@ class RentabilidadService:
         """
         # Query única para obtener todos los productos con sus datos
         productos = Producto.objects.select_related().all()
-        
+
         total_productos = 0
         productos_rentables = 0
         productos_en_perdida = 0
         suma_margenes_ponderados = Decimal('0')
         suma_ventas_ponderacion = Decimal('0')
-        
+
         for producto in productos:
             total_productos += 1
-            
+
             try:
                 costo = producto.calcular_costo_unitario()
                 precio = Decimal(str(producto.precio or 0))
-                
+
                 # Calcular margen
                 if precio > 0:
                     margen = ((precio - costo) / precio) * 100
                 else:
                     margen = Decimal('0')
-                
+
                 # Clasificar producto
                 if costo > precio:
                     productos_en_perdida += 1
                 elif margen >= 20:  # Umbral rentable: 20%+
                     productos_rentables += 1
-                
+
                 # Obtener ventas del mes para ponderar
                 ventas_mes = VentaDetalle.objects.filter(
                     producto=producto,
                     venta__fecha__date__gte=self.inicio_mes,
                     venta__eliminada=False
                 ).aggregate(total=Sum('subtotal'))['total'] or Decimal('0')
-                
+
                 # Ponderación por ventas
                 suma_margenes_ponderados += margen * ventas_mes
                 suma_ventas_ponderacion += ventas_mes
-                
+
             except Exception:
                 # Si hay error calculando un producto, continuar
                 continue
-        
+
         # Calcular porcentajes y margen promedio ponderado
         porcentaje_rentables = (
-            Decimal(productos_rentables / total_productos * 100) 
+            Decimal(productos_rentables / total_productos * 100)
             if total_productos > 0 else Decimal('0')
         )
-        
+
         porcentaje_perdida = (
             Decimal(productos_en_perdida / total_productos * 100)
             if total_productos > 0 else Decimal('0')
         )
-        
+
         margen_promedio = (
             (suma_margenes_ponderados / suma_ventas_ponderacion)
             if suma_ventas_ponderacion > 0 else Decimal('0')
         )
-        
+
         # Obtener objetivo de configuración
         margen_objetivo = self.config.margen_objetivo
-        
+
         return {
             'objetivo_margen': {
                 'meta': float(margen_objetivo),
@@ -131,7 +129,7 @@ class RentabilidadService:
                 'ponderado': True  # Indica que es ponderado por ventas
             }
         }
-    
+
     def get_objetivo_margen_analisis(self):
         """
         Análisis detallado del objetivo de margen con recomendaciones.
@@ -141,11 +139,11 @@ class RentabilidadService:
         """
         kpis = self.get_kpis_rentabilidad()
         objetivo = kpis['objetivo_margen']
-        
+
         # Contar total de productos
         productos = Producto.objects.all()
         total_productos = productos.count()
-        
+
         # Contar productos que cumplen objetivo
         productos_cumpliendo = 0
         for producto in productos:
@@ -158,13 +156,13 @@ class RentabilidadService:
                         productos_cumpliendo += 1
             except Exception:
                 continue
-        
+
         # Obtener productos con margen bajo (< 25%)
         productos_bajos = self._obtener_productos_margen_bajo(threshold=25)
-        
+
         # Generar recomendaciones automáticas
         recomendaciones = self._generar_recomendaciones(productos_bajos)
-        
+
         return {
             'total_productos': total_productos,
             'productos_cumpliendo': productos_cumpliendo,
@@ -177,7 +175,7 @@ class RentabilidadService:
             'productos_criticos': productos_bajos[:5],  # Top 5 más urgentes
             'recomendaciones': recomendaciones[:3]  # Top 3 recomendaciones
         }
-    
+
     def _obtener_productos_margen_bajo(self, threshold=25):
         """
         Obtiene productos con margen por debajo del threshold.
@@ -191,17 +189,17 @@ class RentabilidadService:
         """
         productos = Producto.objects.all()
         productos_bajos = []
-        
+
         for producto in productos:
             try:
                 costo = producto.calcular_costo_unitario()
                 precio = Decimal(str(producto.precio or 0))
-                
+
                 if precio == 0:
                     continue
-                
+
                 margen = ((precio - costo) / precio) * 100
-                
+
                 # Solo productos con margen bajo
                 if margen < threshold:
                     # Ventas del mes para calcular impacto
@@ -213,19 +211,19 @@ class RentabilidadService:
                         cantidad=Sum('cantidad'),
                         total=Sum('subtotal')
                     )
-                    
+
                     cantidad_vendida = ventas_mes['cantidad'] or 0
                     total_vendido = ventas_mes['total'] or Decimal('0')
-                    
+
                     # Calcular precio sugerido para margen objetivo
                     precio_sugerido = self._calcular_precio_sugerido(
-                        costo, 
+                        costo,
                         self.config.margen_objetivo
                     )
-                    
+
                     # Impacto = cuánto más ganaríamos con el nuevo precio
                     impacto = (precio_sugerido - precio) * cantidad_vendida
-                    
+
                     productos_bajos.append({
                         'producto': producto,
                         'nombre': producto.nombre,
@@ -237,17 +235,17 @@ class RentabilidadService:
                         'impacto_estimado': float(impacto.quantize(Decimal('0.01'))),
                         'es_top_seller': cantidad_vendida >= 10  # Threshold configurable
                     })
-            
+
             except Exception:
                 continue
-        
+
         # Ordenar por impacto (productos más vendidos primero)
         return sorted(
-            productos_bajos, 
-            key=lambda x: x['impacto_estimado'], 
+            productos_bajos,
+            key=lambda x: x['impacto_estimado'],
             reverse=True
         )
-    
+
     def _calcular_precio_sugerido(self, costo, margen_objetivo):
         """
         Calcula el precio de venta necesario para alcanzar margen objetivo.
@@ -264,16 +262,16 @@ class RentabilidadService:
         if margen_objetivo >= 100:
             # Margen 100% no es alcanzable
             return costo * 2
-        
+
         margen_decimal = margen_objetivo / 100
         precio = costo / (1 - margen_decimal)
-        
+
         # Redondear a decenas (ej: 2485 -> 2490)
         if self.config.redondear_precios:
             precio = (precio / 10).quantize(Decimal('1'), rounding=ROUND_HALF_UP) * 10
-        
+
         return precio.quantize(Decimal('0.01'))
-    
+
     def _generar_recomendaciones(self, productos_bajos):
         """
         Genera recomendaciones automáticas basadas en análisis de productos.
@@ -285,13 +283,13 @@ class RentabilidadService:
             list de dict con recomendaciones accionables
         """
         recomendaciones = []
-        
+
         # Recomendación 1: Ajustar precios de top sellers
         top_sellers_bajos = [
-            p for p in productos_bajos 
+            p for p in productos_bajos
             if p['es_top_seller'] and p['margen_actual'] < 30
         ]
-        
+
         if top_sellers_bajos:
             impacto_total = sum(p['impacto_estimado'] for p in top_sellers_bajos)
             recomendaciones.append({
@@ -303,10 +301,10 @@ class RentabilidadService:
                 'accion': 'Revisar precios de productos más vendidos',
                 'prioridad': 'alta'
             })
-        
+
         # Recomendación 2: Productos en pérdida
         en_perdida = [p for p in productos_bajos if p['margen_actual'] < 0]
-        
+
         if en_perdida:
             recomendaciones.append({
                 'tipo': 'productos_en_perdida',
@@ -317,13 +315,13 @@ class RentabilidadService:
                 'accion': 'Ajustar precios inmediatamente',
                 'prioridad': 'critica'
             })
-        
+
         # Recomendación 3: Renegociar con proveedores
         productos_alto_costo = [
             p for p in productos_bajos
             if p['costo'] > Decimal(str(p['precio_actual'])) * Decimal('0.6')  # Costo > 60% del precio
         ]
-        
+
         if productos_alto_costo:
             recomendaciones.append({
                 'tipo': 'renegociar_costos',
@@ -334,14 +332,14 @@ class RentabilidadService:
                 'accion': 'Contactar proveedores',
                 'prioridad': 'media'
             })
-        
+
         # Ordenar por prioridad
         orden_prioridad = {'critica': 0, 'alta': 1, 'media': 2, 'baja': 3}
         return sorted(
             recomendaciones,
             key=lambda x: orden_prioridad.get(x['prioridad'], 99)
         )
-    
+
     def get_productos_criticos(self, limit=10):
         """
         Obtiene los productos más críticos que requieren atención.
@@ -355,7 +353,7 @@ class RentabilidadService:
         """
         productos_bajos = self._obtener_productos_margen_bajo(threshold=30)
         return productos_bajos[:limit]
-    
+
     def get_productos_rentabilidad(self):
         """
         Obtiene todos los productos con su información de rentabilidad.
@@ -366,26 +364,26 @@ class RentabilidadService:
                   en_perdida, cumple_objetivo, ventas_mes
         """
         from decimal import Decimal
-        from django.db.models import Sum, Count
+
+        from django.db.models import Sum
         from django.utils import timezone
-        from datetime import timedelta
-        
+
         objetivo_margen = float(self.config.margen_objetivo)
         productos = Producto.objects.all()
-        
+
         # Calcular ventas del mes actual para cada producto
         fecha_inicio_mes = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        
+
         lista_productos = []
         for producto in productos:
             costo = producto.calcular_costo_unitario()
             precio_actual = Decimal(str(producto.precio or 0))
-            
+
             if precio_actual > 0:
                 margen = float(((precio_actual - costo) / precio_actual * 100))
             else:
                 margen = 0.0
-            
+
             # Calcular ventas del mes
             ventas_mes = VentaDetalle.objects.filter(
                 producto=producto,
@@ -393,7 +391,7 @@ class RentabilidadService:
             ).aggregate(
                 total=Sum('cantidad')
             )['total'] or 0
-            
+
             lista_productos.append({
                 'nombre': producto.nombre,
                 'costo': float(costo),
@@ -403,5 +401,5 @@ class RentabilidadService:
                 'cumple_objetivo': margen >= objetivo_margen,
                 'ventas_mes': int(ventas_mes)
             })
-        
+
         return lista_productos

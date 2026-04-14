@@ -8,21 +8,17 @@ Funcionalidades:
 """
 
 # ==================== IMPORTS ====================
-from django.shortcuts import render, redirect, get_object_or_404
-from django.contrib.auth.decorators import login_required
-from django.contrib import messages
-from django.urls import reverse
-from django.db import transaction
-from decimal import Decimal
 import json
+from decimal import Decimal
 
-from .models import (
-    Receta, 
-    RecetaMateriaPrima, 
-    MateriaPrima, 
-    Producto
-)
+from django.contrib import messages
+from django.contrib.auth.decorators import login_required
+from django.db import transaction
+from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
+
 from .forms import RecetaForm
+from .models import MateriaPrima, Producto, Receta, RecetaMateriaPrima
 
 
 # ==================== CREAR RECETA ====================
@@ -38,20 +34,20 @@ def crear_receta(request):
                     receta.creador = request.user
                     receta.save()
                     form.save_m2m()  # Guardar relaciones ManyToMany para productos
-                    
+
                     # Procesar ingredientes dinámicos
                     procesar_ingredientes_receta(request.POST, receta)
-                    
+
                     messages.success(request, f'Receta "{receta.nombre}" creada exitosamente.')
                     return redirect('gestion:lista_recetas')
             except Exception as e:
                 messages.error(request, f'Error al crear la receta: {str(e)}')
     else:
         form = RecetaForm()
-    
+
     # Obtener todas las materias primas para el JavaScript
     materias_primas = MateriaPrima.objects.all().order_by('nombre')
-    
+
     context = {
         'form': form,
         'materias_primas': materias_primas,
@@ -64,18 +60,18 @@ def procesar_ingredientes_receta(post_data, receta):
     """Procesa los ingredientes dinámicos del formulario de receta."""
     # Limpiar ingredientes existentes
     RecetaMateriaPrima.objects.filter(receta=receta).delete()
-    
+
     # Procesar nuevos ingredientes
     index = 0
     while f'materia_prima_{index}' in post_data:
         materia_prima_id = post_data.get(f'materia_prima_{index}')
         cantidad = post_data.get(f'cantidad_{index}')
-        
+
         if materia_prima_id and cantidad:
             try:
                 materia_prima = MateriaPrima.objects.get(id=materia_prima_id)
                 cantidad_decimal = Decimal(cantidad)
-                
+
                 RecetaMateriaPrima.objects.create(
                     receta=receta,
                     materia_prima=materia_prima,
@@ -84,7 +80,7 @@ def procesar_ingredientes_receta(post_data, receta):
                 )
             except (MateriaPrima.DoesNotExist, ValueError, TypeError) as e:
                 raise Exception(f'Error al procesar ingrediente {index + 1}: {str(e)}')
-        
+
         index += 1
 
 
@@ -93,11 +89,11 @@ def procesar_ingredientes_receta(post_data, receta):
 def editar_receta(request, pk):
     """Vista para editar una receta existente."""
     receta = get_object_or_404(Receta, pk=pk)
-    
+
     if not request.user.has_perm('gestion.change_receta'):
         messages.error(request, 'No tienes permiso para editar recetas.')
         return redirect('gestion:lista_recetas')
-    
+
     if request.method == 'POST':
         form = RecetaForm(request.POST, instance=receta)
         if form.is_valid():
@@ -105,13 +101,13 @@ def editar_receta(request, pk):
                 with transaction.atomic():
                     receta = form.save(commit=False)
                     receta.save()
-                    
+
                     # Eliminar ingredientes existentes
                     RecetaMateriaPrima.objects.filter(receta=receta).delete()
-                    
+
                     # Procesar nuevos ingredientes
                     procesar_ingredientes_receta(request.POST, receta)
-                    
+
                     messages.success(request, 'Receta actualizada exitosamente.')
                     return redirect('gestion:lista_recetas')
             except Exception as e:
@@ -122,7 +118,7 @@ def editar_receta(request, pk):
                     messages.error(request, f'{form.fields[field].label}: {error}')
     else:
         form = RecetaForm(instance=receta)
-    
+
     # Obtener ingredientes actuales para mostrar en el formulario
     ingredientes_actuales = []
     for ingrediente in receta.recetamateriaprima_set.all():
@@ -133,7 +129,7 @@ def editar_receta(request, pk):
             'unidad': ingrediente.unidad,
             'costo': float(ingrediente.costo_ingrediente())
         })
-    
+
     context = {
         'form': form,
         'receta': receta,
@@ -149,11 +145,11 @@ def editar_receta(request, pk):
 def eliminar_receta(request, pk):
     """Vista para eliminar una receta."""
     receta = get_object_or_404(Receta, pk=pk)
-    
+
     if not request.user.has_perm('gestion.delete_receta'):
         messages.error(request, 'No tienes permiso para eliminar recetas.')
         return redirect('gestion:lista_recetas')
-    
+
     if request.method == 'POST':
         try:
             # Verificar si la receta está siendo usada por productos
@@ -163,20 +159,20 @@ def eliminar_receta(request, pk):
                 if productos_usando.count() > 3:
                     productos_nombres += f" y {productos_usando.count() - 3} más"
                 messages.error(
-                    request, 
+                    request,
                     f'No se puede eliminar la receta porque está siendo usada por los productos: {productos_nombres}'
                 )
                 return redirect('gestion:lista_recetas')
-            
+
             nombre_receta = receta.nombre
             receta.delete()
             messages.success(request, f'Receta "{nombre_receta}" eliminada exitosamente.')
-            
+
         except Exception as e:
             messages.error(request, f'Error al eliminar la receta: {str(e)}')
-        
+
         return redirect('gestion:lista_recetas')
-    
+
     # Para GET, mostrar página de confirmación
     context = {
         'receta': receta,
@@ -191,12 +187,12 @@ def eliminar_receta(request, pk):
 def detalle_receta(request, pk):
     """Vista para ver el detalle de una receta."""
     receta = get_object_or_404(Receta, pk=pk)
-    
+
     # Calcular información adicional
     total_ingredientes = receta.recetamateriaprima_set.count()
     costo_total = receta.costo_total()
     productos_usando = receta.productos.all()
-    
+
     # Obtener ingredientes con información detallada
     ingredientes = []
     for ingrediente in receta.recetamateriaprima_set.all():
@@ -208,11 +204,11 @@ def detalle_receta(request, pk):
             'costo_total': ingrediente.costo_ingrediente(),
             'porcentaje_costo': (ingrediente.costo_ingrediente() / costo_total * 100) if costo_total > 0 else 0
         })
-    
+
     # Preparar subtitle con estado e ingredientes
     estado_text = "Receta Activa" if receta.activa else "Receta Inactiva"
     subtitle_text = f"{estado_text} • {total_ingredientes} ingrediente(s)"
-    
+
     context = {
         'receta': receta,
         'ingredientes': ingredientes,
@@ -230,19 +226,20 @@ def detalle_receta(request, pk):
 @login_required
 def lista_recetas(request):
     """Vista para listar recetas con KPIs LINO V3"""
-    from gestion.utils.kpi_builder import prepare_recetas_kpis
     from django.core.paginator import Paginator
-    
+
+    from gestion.utils.kpi_builder import prepare_recetas_kpis
+
     recetas = Receta.objects.all().prefetch_related('productos', 'materias_primas')
-    
+
     # Preparar KPIs
     kpis = prepare_recetas_kpis(recetas)
-    
+
     # Paginación
     paginator = Paginator(recetas, 25)
     page_number = request.GET.get('page', 1)
     recetas_paginadas = paginator.get_page(page_number)
-    
+
     context = {
         'recetas': recetas_paginadas,
         'kpis': kpis,

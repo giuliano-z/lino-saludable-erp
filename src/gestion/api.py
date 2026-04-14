@@ -1,10 +1,10 @@
+from datetime import datetime
+
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET
-from django.core import serializers
-from django.db.models import Q
-from .models import Producto, Venta, MateriaPrima
-import json
-from datetime import datetime, timedelta
+
+from .models import MateriaPrima, Producto, Venta
+
 
 @require_GET
 def producto_precio(request, pk):
@@ -34,7 +34,7 @@ def api_productos(request):
                 'descripcion': producto.descripcion or '',
                 'updated_at': producto.id  # Simular timestamp
             })
-        
+
         return JsonResponse({
             'status': 'success',
             'data': data,
@@ -61,9 +61,9 @@ def api_inventario(request):
                 'proveedor': materia.proveedor or '',
                 'updated_at': materia.id
             })
-        
+
         return JsonResponse({
-            'status': 'success', 
+            'status': 'success',
             'data': data,
             'count': len(data),
             'last_updated': datetime.now().isoformat()
@@ -87,10 +87,10 @@ def api_ventas(request):
                 'items_count': venta.detalles.count(),
                 'updated_at': venta.id
             })
-        
+
         return JsonResponse({
             'status': 'success',
-            'data': data, 
+            'data': data,
             'count': len(data),
             'last_updated': datetime.now().isoformat()
         })

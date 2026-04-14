@@ -1,16 +1,27 @@
 from django.contrib import admin
+
 from .models import (
-    Producto, Venta, Compra, MateriaPrima, ProductoMateriaPrima, 
-    MovimientoMateriaPrima, PerfilUsuario, LoteMateriaPrima,
-    HistorialCosto, ConfiguracionCostos, Receta, RecetaMateriaPrima,
-    HistorialPreciosMateriaPrima
+    Compra,
+    ConfiguracionCostos,
+    HistorialCosto,
+    HistorialPreciosMateriaPrima,
+    LoteMateriaPrima,
+    MateriaPrima,
+    MovimientoMateriaPrima,
+    PerfilUsuario,
+    Producto,
+    ProductoMateriaPrima,
+    Receta,
+    RecetaMateriaPrima,
+    Venta,
 )
+
 
 # Registros existentes (mantener)
 @admin.register(Producto)
 class ProductoAdmin(admin.ModelAdmin):
     list_display = [
-        'nombre', 'tipo_producto', 'precio', 'stock', 'categoria', 
+        'nombre', 'tipo_producto', 'precio', 'stock', 'categoria',
         'costo_base', 'margen_ganancia', 'precio_venta_calculado', 'estado_stock'
     ]
     list_filter = ['categoria', 'tipo_producto', 'fecha_creacion']
@@ -37,13 +48,13 @@ class ProductoAdmin(admin.ModelAdmin):
         }),
         ('Características', {
             'fields': (
-                'marca', 'tamaño_porcion', 'atributos_dieteticos', 
+                'marca', 'tamaño_porcion', 'atributos_dieteticos',
                 'codigo_barras', 'imagen'
             ),
             'classes': ('collapse',)
         }),
     )
-    
+
     def get_readonly_fields(self, request, obj=None):
         readonly = ['precio_venta_calculado']
         if obj and obj.tipo_producto == 'receta':
@@ -84,13 +95,13 @@ class MateriaPrimaAdmin(admin.ModelAdmin):
     list_editable = ['stock_actual', 'stock_minimo', 'costo_unitario']
     inlines = [LoteMateriaPrimaInline]
     actions = ['actualizar_productos_relacionados']
-    
+
     def actualizar_productos_relacionados(self, request, queryset):
         productos_actualizados = 0
         for materia_prima in queryset:
             productos_afectados = materia_prima.actualizar_productos_relacionados(usuario=request.user)
             productos_actualizados += len(productos_afectados)
-        
+
         self.message_user(
             request,
             f"Se actualizaron {productos_actualizados} productos relacionados."
@@ -135,7 +146,7 @@ class RecetaAdmin(admin.ModelAdmin):
     search_fields = ['nombre', 'descripcion']
     inlines = [RecetaMateriaPrimaInline]
     filter_horizontal = ['productos']
-    
+
     def costo_total_display(self, obj):
         return f"${obj.costo_total():.2f}"
     costo_total_display.short_description = 'Costo Total'
@@ -146,7 +157,7 @@ class RecetaMateriaPrimaAdmin(admin.ModelAdmin):
     list_filter = ['receta', 'materia_prima', 'unidad']
     search_fields = ['receta__nombre', 'materia_prima__nombre']
     autocomplete_fields = ['receta', 'materia_prima']
-    
+
     def costo_ingrediente_display(self, obj):
         return f"${obj.costo_ingrediente():.2f}"
     costo_ingrediente_display.short_description = 'Costo'
@@ -163,7 +174,7 @@ class HistorialCostoAdmin(admin.ModelAdmin):
         'producto', 'fecha', 'costo_anterior', 'costo_nuevo',
         'precio_anterior', 'precio_nuevo', 'usuario'
     ]
-    
+
     def porcentaje_cambio_costo_display(self, obj):
         cambio = obj.porcentaje_cambio_costo()
         if cambio > 0:
@@ -176,7 +187,7 @@ class HistorialCostoAdmin(admin.ModelAdmin):
 @admin.register(ConfiguracionCostos)
 class ConfiguracionCostosAdmin(admin.ModelAdmin):
     list_display = [
-        'fecha_modificacion', 'incluir_costos_indirectos', 
+        'fecha_modificacion', 'incluir_costos_indirectos',
         'actualizar_automaticamente', 'redondear_precios'
     ]
     fieldsets = (
@@ -201,11 +212,11 @@ class ConfiguracionCostosAdmin(admin.ModelAdmin):
             )
         }),
     )
-    
+
     def has_add_permission(self, request):
         # Solo permitir una configuración
         return not ConfiguracionCostos.objects.exists()
-    
+
     def has_delete_permission(self, request, obj=None):
         # No permitir eliminar la configuración
         return False
@@ -215,47 +226,47 @@ class ConfiguracionCostosAdmin(admin.ModelAdmin):
 @admin.register(HistorialPreciosMateriaPrima)
 class HistorialPreciosMateriaPrimaAdmin(admin.ModelAdmin):
     list_display = [
-        'materia_prima', 'fecha_cambio', 'precio_anterior_display', 
-        'precio_nuevo_display', 'porcentaje_cambio_display', 
+        'materia_prima', 'fecha_cambio', 'precio_anterior_display',
+        'precio_nuevo_display', 'porcentaje_cambio_display',
         'productos_afectados_count', 'usuario'
     ]
     list_filter = ['fecha_cambio', 'materia_prima', 'usuario']
     search_fields = ['materia_prima__nombre', 'motivo']
     readonly_fields = [
-        'fecha_cambio', 'porcentaje_cambio_display', 
+        'fecha_cambio', 'porcentaje_cambio_display',
         'diferencia_absoluta_display', 'impacto_economico_display'
     ]
     ordering = ['-fecha_cambio']
-    
+
     def precio_anterior_display(self, obj):
         return f"${obj.precio_anterior:.2f}"
     precio_anterior_display.short_description = 'Precio Anterior'
-    
+
     def precio_nuevo_display(self, obj):
         return f"${obj.precio_nuevo:.2f}"
     precio_nuevo_display.short_description = 'Precio Nuevo'
-    
+
     def porcentaje_cambio_display(self, obj):
         cambio = obj.porcentaje_cambio()
         color = "green" if cambio >= 0 else "red"
         return f'<span style="color: {color};">{cambio:+.2f}%</span>'
     porcentaje_cambio_display.short_description = 'Cambio %'
     porcentaje_cambio_display.allow_tags = True
-    
+
     def diferencia_absoluta_display(self, obj):
         diff = obj.diferencia_absoluta()
         return f"${diff:+.2f}"
     diferencia_absoluta_display.short_description = 'Diferencia'
-    
+
     def impacto_economico_display(self, obj):
         impacto = obj.impacto_economico_estimado()
         return f"${impacto:.2f}"
     impacto_economico_display.short_description = 'Impacto Stock'
-    
+
     def has_add_permission(self, request):
         # Solo lectura - se crean automáticamente
         return False
-    
+
     def has_change_permission(self, request, obj=None):
         # Solo lectura - no modificar historial
         return False

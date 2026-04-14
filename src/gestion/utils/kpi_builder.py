@@ -3,11 +3,12 @@ LINO V3 - KPI Builder Utilities
 Construcción consistente de KPIs para todos los módulos
 """
 
-from django.db.models import Sum, Count, F, Q
 from decimal import Decimal
 
+from django.db.models import Count, F, Sum
 
-def build_kpi(icon, badge, label, value, variant='info', 
+
+def build_kpi(icon, badge, label, value, variant='info',
               trend_icon=None, trend_text=None, trend_variant='info'):
     """
     Construir estructura KPI consistente para todos los módulos
@@ -60,20 +61,20 @@ def prepare_product_kpis(productos_queryset):
     """
     total = productos_queryset.count()
     en_stock = productos_queryset.filter(stock__gt=0).count()
-    
+
     # Stock Bajo = productos con stock <= stock_minimo (incluye stock=0)
     # Esto cubre tanto productos agotados como productos con stock bajo
     bajo_stock = productos_queryset.filter(
         stock__lte=F('stock_minimo')
     ).count()
-    
+
     sin_stock = productos_queryset.filter(stock=0).count()
-    
+
     # Valor total del inventario
     valor_total = productos_queryset.aggregate(
         total=Sum(F('stock') * F('precio'))
     )['total'] or Decimal('0')
-    
+
     return [
         build_kpi(
             icon='box-seam',
@@ -131,10 +132,10 @@ def prepare_ventas_kpis(ventas_queryset, periodo='mes'):
     """
     total_ventas = ventas_queryset.count()
     ingresos = ventas_queryset.aggregate(total=Sum('total'))['total'] or Decimal('0')
-    
+
     # Ticket promedio
     ticket_promedio = float(ingresos) / total_ventas if total_ventas > 0 else 0
-    
+
     # Producto más vendido (requiere VentaDetalle)
     from gestion.models import VentaDetalle
     producto_top = VentaDetalle.objects.filter(
@@ -142,10 +143,10 @@ def prepare_ventas_kpis(ventas_queryset, periodo='mes'):
     ).values('producto__nombre').annotate(
         total=Sum('cantidad')
     ).order_by('-total').first()
-    
+
     producto_top_nombre = producto_top['producto__nombre'] if producto_top else 'N/A'
     producto_top_cantidad = producto_top['total'] if producto_top else 0
-    
+
     return [
         build_kpi(
             icon='cash-coin',
@@ -201,11 +202,12 @@ def prepare_compras_kpis(compras_queryset):
     Returns:
         list: Lista de 4 KPIs formateados
     """
-    from django.db.models import Case, When, F
+    from django.db.models import Case, F, When
+
     from gestion.models import CompraDetalle
-    
+
     total_compras = compras_queryset.count()
-    
+
     # Inversión total (compatible legacy + nuevo)
     # Legacy: precio_mayoreo, Nuevo: total
     inversion = compras_queryset.annotate(
@@ -214,38 +216,37 @@ def prepare_compras_kpis(compras_queryset):
             default=F('precio_mayoreo')
         )
     ).aggregate(total=Sum('importe'))['total'] or Decimal('0')
-    
+
     # Proveedores únicos
     proveedores = compras_queryset.values('proveedor').distinct().count()
-    
+
     # Materias compradas distintas (compatible con legacy y nuevo sistema)
     # Legacy: materia_prima directamente en Compra
     # Nuevo: materias primas en CompraDetalle
-    from gestion.models import CompraDetalle
-    
+
     # Contar materias de compras legacy (tienen materia_prima no null)
     materias_legacy = compras_queryset.filter(
         materia_prima__isnull=False
     ).values('materia_prima').distinct().count()
-    
+
     # Contar materias de compras nuevas (CompraDetalle)
     compras_ids = compras_queryset.values_list('id', flat=True)
     materias_nuevas = CompraDetalle.objects.filter(
         compra_id__in=compras_ids
     ).values('materia_prima').distinct().count()
-    
+
     # Total: sumar ambas (sin duplicados si una materia está en ambos sistemas)
     # Usar set para evitar duplicados
     materias_legacy_ids = set(compras_queryset.filter(
         materia_prima__isnull=False
     ).values_list('materia_prima_id', flat=True))
-    
+
     materias_nuevas_ids = set(CompraDetalle.objects.filter(
         compra_id__in=compras_ids
     ).values_list('materia_prima_id', flat=True))
-    
+
     materias_distintas = len(materias_legacy_ids | materias_nuevas_ids)  # Unión de conjuntos
-    
+
     return [
         build_kpi(
             icon='truck',
@@ -292,24 +293,23 @@ def prepare_compras_kpis(compras_queryset):
 
 def prepare_recetas_kpis(recetas_queryset):
     """Prepara KPIs para la vista de recetas."""
-    from gestion.models import Receta
     from decimal import Decimal
-    
+
     total_recetas = recetas_queryset.count()
     recetas_activas = recetas_queryset.filter(activa=True).count()
-    
+
     # Costo promedio de recetas (calculado en Python porque costo_total es un método)
     costo_promedio = Decimal('0')
     if total_recetas > 0:
         costos = [receta.costo_total() for receta in recetas_queryset]
         total_costos = sum(costos) if costos else Decimal('0')
         costo_promedio = total_costos / total_recetas if total_recetas > 0 else Decimal('0')
-    
+
     # Receta más usada (por productos que la usan)
     receta_destacada = recetas_queryset.annotate(
         productos_count=Count('productos')
     ).order_by('-productos_count').first()
-    
+
     receta_destacada_nombre = receta_destacada.nombre if receta_destacada else "N/A"
 
 

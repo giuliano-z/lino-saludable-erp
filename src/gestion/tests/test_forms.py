@@ -2,18 +2,19 @@
 Tests de integridad de formularios y validaciones.
 Verifica: campos requeridos, formatos válidos, querysets, clean().
 """
-from django.test import TestCase
-from gestion.forms import VentaForm, VentaDetalleForm, VentaDetalleFormSet, CompraForm
-from gestion.models import Producto
-from decimal import Decimal
 from datetime import date, timedelta
+from decimal import Decimal
 
-from .factories import UserFactory, ProductoFactory, MateriaPrimaFactory
+from django.test import TestCase
+
+from gestion.forms import CompraForm, VentaDetalleForm, VentaDetalleFormSet, VentaForm
+
+from .factories import MateriaPrimaFactory, ProductoFactory
 
 
 class TestVentaForm(TestCase):
     """Tests para el formulario VentaForm."""
-    
+
     def test_fecha_requerida_no_puede_estar_vacia(self):
         """Campo fecha es obligatorio."""
         form = VentaForm(data={
@@ -22,7 +23,7 @@ class TestVentaForm(TestCase):
         })
         self.assertFalse(form.is_valid())
         self.assertIn('fecha', form.errors)
-    
+
     def test_fecha_formato_valido_iso_aceptado(self):
         """Acepta fecha en formato ISO (YYYY-MM-DD)."""
         form = VentaForm(data={
@@ -31,7 +32,7 @@ class TestVentaForm(TestCase):
         })
         self.assertTrue(form.is_valid())
         self.assertEqual(form.cleaned_data['fecha'], date.today())
-    
+
     def test_fecha_formato_invalido_rechazado(self):
         """Rechaza fecha en formato incorrecto."""
         form = VentaForm(data={
@@ -40,7 +41,7 @@ class TestVentaForm(TestCase):
         })
         self.assertFalse(form.is_valid())
         self.assertIn('fecha', form.errors)
-    
+
     def test_cliente_es_opcional(self):
         """Campo cliente puede estar vacío."""
         form = VentaForm(data={
@@ -48,7 +49,7 @@ class TestVentaForm(TestCase):
             'fecha': str(date.today())
         })
         self.assertTrue(form.is_valid())
-    
+
     def test_form_valido_con_datos_minimos(self):
         """Form es válido solo con cliente y fecha."""
         form = VentaForm(data={
@@ -57,7 +58,7 @@ class TestVentaForm(TestCase):
         })
         self.assertTrue(form.is_valid())
         self.assertFalse(form.errors)
-    
+
     def test_fecha_futura_aceptada(self):
         """Acepta fechas futuras (pre-venta)."""
         fecha_futura = date.today() + timedelta(days=5)
@@ -66,7 +67,7 @@ class TestVentaForm(TestCase):
             'fecha': str(fecha_futura)
         })
         self.assertTrue(form.is_valid())
-    
+
     def test_fecha_pasada_aceptada(self):
         """Acepta fechas pasadas."""
         fecha_pasada = date.today() - timedelta(days=10)
@@ -79,7 +80,7 @@ class TestVentaForm(TestCase):
 
 class TestVentaDetalleForm(TestCase):
     """Tests para el formulario VentaDetalleForm."""
-    
+
     def setUp(self):
         """Preparar datos de test."""
         self.producto_con_stock = ProductoFactory.create_producto(
@@ -92,17 +93,17 @@ class TestVentaDetalleForm(TestCase):
             stock=0,
             precio=Decimal('200')
         )
-    
+
     def test_queryset_solo_productos_con_stock(self):
         """El field 'producto' solo muestra productos con stock > 0."""
         form = VentaDetalleForm()
         queryset = form.fields['producto'].queryset
-        
+
         # Verificar que solo trae productos con stock
         producto_ids = [p.id for p in queryset]
         self.assertIn(self.producto_con_stock.id, producto_ids)
         self.assertNotIn(self.producto_sin_stock.id, producto_ids)
-    
+
     def test_cantidad_mayor_a_stock_rechaza(self):
         """clean() rechaza cantidad > stock disponible."""
         form = VentaDetalleForm(data={
@@ -112,7 +113,7 @@ class TestVentaDetalleForm(TestCase):
         })
         self.assertFalse(form.is_valid())
         self.assertIn('No hay suficiente stock', str(form.errors))
-    
+
     def test_cantidad_valida_aceptada(self):
         """Cantidad válida (≤ stock) es aceptada."""
         form = VentaDetalleForm(data={
@@ -121,7 +122,7 @@ class TestVentaDetalleForm(TestCase):
             'precio_unitario': '100'
         })
         self.assertTrue(form.is_valid())
-    
+
     def test_cantidad_cero_rechazada(self):
         """Cantidad 0 es rechazada."""
         form = VentaDetalleForm(data={
@@ -130,7 +131,7 @@ class TestVentaDetalleForm(TestCase):
             'precio_unitario': '100'
         })
         self.assertFalse(form.is_valid())
-    
+
     def test_precio_unitario_opcional_usa_precio_producto(self):
         """Si no hay precio_unitario, podría usar el del producto (depende impl)."""
         form = VentaDetalleForm(data={
@@ -145,18 +146,18 @@ class TestVentaDetalleForm(TestCase):
 
 class TestVentaDetalleFormSet(TestCase):
     """Tests para el formset de detalles de venta."""
-    
+
     def setUp(self):
         """Preparar datos de test."""
         self.producto1 = ProductoFactory.create_producto(nombre='Pan', stock=10)
         self.producto2 = ProductoFactory.create_producto(nombre='Empanada', stock=5)
-    
+
     def test_formset_tiene_extra_form_para_agregar(self):
         """El formset tiene 1 form extra para agregar nuevos detalles."""
         formset = VentaDetalleFormSet()
         # extra=1 significa que hay 1 form vacío para poder agregar
         self.assertEqual(len(formset), 1)
-    
+
     def test_formset_con_multiples_productos_valido(self):
         """Formset puede validar múltiples productos en una venta."""
         data = {
@@ -182,14 +183,14 @@ class TestVentaDetalleFormSet(TestCase):
 
 class TestCompraForm(TestCase):
     """Tests para el formulario CompraForm."""
-    
+
     def setUp(self):
         """Preparar datos de test."""
         self.mp = MateriaPrimaFactory.create_mp(
             nombre='Harina',
             stock=5
         )
-    
+
     def test_cantidad_requerida(self):
         """Campo cantidad es obligatorio."""
         form = CompraForm(data={
@@ -200,7 +201,7 @@ class TestCompraForm(TestCase):
         })
         # Depende si el form lo valida como requerido
         self.assertIsNotNone(form)
-    
+
     def test_precio_requerido(self):
         """Campo precio es obligatorio."""
         form = CompraForm(data={
@@ -210,7 +211,7 @@ class TestCompraForm(TestCase):
             'proveedor': 'Proveedor Test'
         })
         self.assertIsNotNone(form)
-    
+
     def test_materia_prima_existente_solo(self):
         """Solo acepta materias primas existentes."""
         form = CompraForm(data={

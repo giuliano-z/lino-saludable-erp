@@ -10,58 +10,59 @@ Funcionalidades:
 """
 
 # ==================== IMPORTS ====================
-from django.shortcuts import render, redirect, get_object_or_404
-from django.contrib.auth.decorators import login_required
-from django.contrib import messages
-from django.http import HttpResponse
-from django.urls import reverse
-from django.db import models, transaction
-from django.db.models import Sum, Q, F
-from django.utils import timezone
 from datetime import datetime
 
-from .models import (
-    Producto,
-    MateriaPrima,
-    ProductoMateriaPrima,
-    MovimientoMateriaPrima,
-    LoteMateriaPrima,
-    VentaDetalle,
-)
+from django.contrib import messages
+from django.contrib.auth.decorators import login_required
+from django.db import models, transaction
+from django.db.models import F, Q, Sum
+from django.http import HttpResponse
+from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
+from django.utils import timezone
+
 from .forms import (
-    ProductoForm,
     MateriaPrimaForm,
     MovimientoMateriaPrimaForm,
+    ProductoForm,
+)
+from .models import (
+    LoteMateriaPrima,
+    MateriaPrima,
+    MovimientoMateriaPrima,
+    Producto,
+    ProductoMateriaPrima,
+    VentaDetalle,
 )
 from .resources import ProductoResource
-
 
 # ==================== VISTAS DE PRODUCTOS ====================
 
 @login_required
 def lista_productos(request):
     """Vista mejorada de lista de productos con filtros y KPIs LINO V3."""
-    from gestion.utils.kpi_builder import prepare_product_kpis
     from django.core.paginator import Paginator
-    
+
+    from gestion.utils.kpi_builder import prepare_product_kpis
+
     productos = Producto.objects.all()
-    
+
     # Filtros
     query = request.GET.get('q', '').strip()
     categoria_seleccionada = request.GET.get('categoria', '')
     estado_stock = request.GET.get('estado_stock', '')
-    
+
     # Aplicar filtros
     if query:
         productos = productos.filter(
-            Q(nombre__icontains=query) | 
+            Q(nombre__icontains=query) |
             Q(descripcion__icontains=query) |
             Q(marca__icontains=query)
         )
-    
+
     if categoria_seleccionada:
         productos = productos.filter(categoria=categoria_seleccionada)
-    
+
     if estado_stock:
         if estado_stock == 'agotado':
             productos = productos.filter(stock=0)
@@ -71,18 +72,18 @@ def lista_productos(request):
             productos = productos.filter(stock__gt=F('stock_minimo'), stock__lte=F('stock_minimo') * 2)
         elif estado_stock == 'normal':
             productos = productos.filter(stock__gt=F('stock_minimo') * 2)
-    
+
     # Paginación
     paginator = Paginator(productos.order_by('nombre'), 25)
     page_number = request.GET.get('page', 1)
     productos_paginados = paginator.get_page(page_number)
-    
+
     # Preparar KPIs usando utility
     kpis = prepare_product_kpis(Producto.objects.all())
-    
+
     # Obtener categorías disponibles para el filtro
     categorias = [choice[0] for choice in Producto.CATEGORIAS_DIETETICA]
-    
+
     context = {
         'productos': productos_paginados,
         'kpis': kpis,
@@ -96,7 +97,7 @@ def lista_productos(request):
         'create_url': reverse('gestion:crear_producto'),
         'export_url': reverse('gestion:exportar_productos'),
     }
-    
+
     return render(request, 'modules/productos/lista.html', context)
 
 
@@ -106,7 +107,7 @@ def crear_producto(request):
     if not request.user.has_perm('gestion.add_producto'):
         messages.error(request, 'No tienes permiso para crear productos.')
         return redirect('gestion:lista_productos')
-    
+
     if request.method == 'POST':
         form = ProductoForm(request.POST)
         if form.is_valid():
@@ -117,13 +118,13 @@ def crear_producto(request):
                     if nueva_categoria and form.cleaned_data.get('categoria') != 'nueva':
                         # La nueva categoría ya fue procesada en el clean() del formulario
                         pass
-                    
+
                     # Guardar el producto primero (sin stock inicial)
                     producto = form.save(commit=False)
                     stock_inicial = form.cleaned_data.get('stock', 0)
                     producto.stock = 0  # Inicializar en 0 temporalmente
                     producto.save()
-                    
+
                     # Ahora que el producto tiene ID, podemos trabajar con las relaciones
                     # Si el producto usa receta, verificar materias primas y producir
                     if stock_inicial and stock_inicial > 0:
@@ -136,7 +137,7 @@ def crear_producto(request):
                                 # Eliminar el producto recién creado
                                 producto.delete()
                                 raise Exception("Stock de materias primas insuficiente")
-                            
+
                             # Descontar materias primas y actualizar stock
                             producto.descontar_materias_primas(stock_inicial, request.user)
                             producto.stock = stock_inicial
@@ -145,32 +146,32 @@ def crear_producto(request):
                             # Para productos que no usan receta, simplemente establecer el stock
                             producto.stock = stock_inicial
                             producto.save()
-                    
+
                     # Calcular y actualizar costos después de crear el producto
                     if producto.tipo_producto in ['receta', 'fraccionamiento']:
                         # Calcular costo base automáticamente
                         costo_calculado = producto.calcular_costo_unitario()
                         if costo_calculado > 0:
                             producto.costo_base = costo_calculado
-                            
+
                             # Calcular precio sugerido si hay margen
                             if producto.margen_ganancia and producto.margen_ganancia > 0:
                                 from decimal import Decimal
                                 margen_decimal = Decimal(str(producto.margen_ganancia))
                                 precio_calculado = costo_calculado * (Decimal('1') + margen_decimal / Decimal('100'))
                                 producto.precio_venta_calculado = precio_calculado
-                            
+
                             # El método save() del modelo se encargará de la sincronización de precios
                             producto.save()
-                    
+
                     # Mensaje de éxito personalizado
                     if nueva_categoria:
                         messages.success(request, f'Producto creado exitosamente con la nueva categoría "{nueva_categoria}".')
                     else:
                         messages.success(request, 'Producto creado exitosamente.')
-                    
+
                     return redirect('gestion:lista_productos')
-                    
+
             except Exception as e:
                 messages.error(request, f'Error al crear el producto: {str(e)}')
                 return render(request, 'modules/productos/form.html', {'form': form, 'title': 'Crear Producto', 'producto': None})
@@ -186,7 +187,7 @@ def crear_producto(request):
             return render(request, 'modules/productos/form.html', {'form': form, 'title': 'Crear Producto', 'producto': None})
     else:
         form = ProductoForm()
-    
+
     return render(request, 'modules/productos/form.html', {'form': form, 'title': 'Crear Producto', 'producto': None})
 
 
@@ -194,7 +195,7 @@ def crear_producto(request):
 def detalle_producto(request, pk):
     """Vista de detalle de producto con información completa."""
     producto = get_object_or_404(Producto, pk=pk)
-    
+
     # Calcular estadísticas básicas (solo ventas activas)
     ventas_mes = VentaDetalle.objects.filter(
         producto=producto,
@@ -205,20 +206,20 @@ def detalle_producto(request, pk):
         total_vendido=models.Sum('cantidad'),
         total_ventas=models.Count('venta', distinct=True)
     )
-    
+
     # Obtener últimas ventas del producto (solo activas)
     ultimas_ventas = VentaDetalle.objects.filter(
         producto=producto,
         venta__eliminada=False  # ✅ Excluir ventas eliminadas
     ).select_related('venta').order_by('-venta__fecha')[:5]
-    
+
     context = {
         'producto': producto,
         'ventas_mes': ventas_mes['total_ventas'] or 0,
         'cantidad_vendida_mes': ventas_mes['total_vendido'] or 0,
         'ultimas_ventas': ultimas_ventas,
     }
-    
+
     return render(request, 'modules/productos/detalle.html', context)
 
 
@@ -226,11 +227,11 @@ def detalle_producto(request, pk):
 def editar_producto(request, pk):
     """Vista para editar un producto existente."""
     producto = get_object_or_404(Producto, pk=pk)
-    
+
     if not request.user.has_perm('gestion.change_producto'):
         messages.error(request, 'No tienes permiso para editar productos.')
         return redirect('gestion:lista_productos')
-    
+
     if request.method == 'POST':
         form = ProductoForm(request.POST, instance=producto)
         if form.is_valid():
@@ -238,10 +239,10 @@ def editar_producto(request, pk):
                 with transaction.atomic():
                     # Guardar stock anterior para comparar
                     stock_anterior = producto.stock
-                    
+
                     # Guardar el producto
                     producto = form.save(commit=False)
-                    
+
                     # Solo procesar producción si hay cantidad_a_producir explícita
                     # (campo separado del stock, para producir desde materias primas)
                     cantidad_a_producir = form.cleaned_data.get('cantidad_a_producir', 0)
@@ -255,11 +256,11 @@ def editar_producto(request, pk):
                         producto.descontar_materias_primas(cantidad_a_producir, request.user)
                         producto.stock += cantidad_a_producir
                         messages.info(request, f'✅ Producidas {cantidad_a_producir} unidades desde materias primas')
-                    
+
                     # Si solo se cambió el stock manualmente (sin producir)
                     # simplemente guardar el nuevo valor sin descontar nada
                     producto.save()
-                    
+
                     messages.success(request, f'Producto "{producto.nombre}" actualizado exitosamente.')
                 return redirect('gestion:lista_productos')
             except Exception as e:
@@ -271,7 +272,7 @@ def editar_producto(request, pk):
             messages.error(request, 'Error al actualizar el producto. Verifica los datos ingresados.')
     else:
         form = ProductoForm(instance=producto)
-    
+
     return render(request, 'modules/productos/form.html', {
         'form': form,
         'title': 'Editar Producto',
@@ -283,44 +284,44 @@ def editar_producto(request, pk):
 def eliminar_producto(request, pk):
     """Vista para eliminar un producto."""
     producto = get_object_or_404(Producto, pk=pk)
-    
+
     # Verificar permisos
     if not request.user.has_perm('gestion.delete_producto'):
         messages.error(request, 'No tienes permiso para eliminar productos.')
         return redirect('gestion:lista_productos')
-    
+
     if request.method == 'POST':
         try:
             nombre_producto = producto.nombre
             categoria_producto = producto.get_categoria_display()
             stock_producto = producto.stock
-            
+
             with transaction.atomic():
                 # Verificar si el producto tiene ventas asociadas
                 ventas_asociadas = producto.ventadetalle_set.count()
                 if ventas_asociadas > 0:
                     messages.warning(
-                        request, 
+                        request,
                         f'El producto "{nombre_producto}" tiene {ventas_asociadas} venta(s) asociada(s). '
                         'Se eliminará el producto pero se mantendrá el historial de ventas.'
                     )
-                
+
                 # Eliminar el producto
                 producto.delete()
-                
+
                 # Mensaje de éxito con información detallada
                 messages.success(
-                    request, 
+                    request,
                     f'Producto "{nombre_producto}" (Categoría: {categoria_producto}, Stock: {stock_producto}) '
                     'eliminado exitosamente.'
                 )
-                
+
             return redirect('gestion:lista_productos')
-            
+
         except Exception as e:
             messages.error(request, f'Error al eliminar el producto: {str(e)}')
             return redirect('gestion:lista_productos')
-    
+
     # Para GET, mostrar página de confirmación
     context = {
         'producto': producto,
@@ -357,17 +358,17 @@ def lista_materias_primas(request):
     query = request.GET.get('q')
     proveedor = request.GET.get('proveedor')
     estado_stock = request.GET.get('estado_stock')
-    
+
     if query:
         materias_primas = materias_primas.filter(
-            Q(nombre__icontains=query) | 
+            Q(nombre__icontains=query) |
             Q(descripcion__icontains=query) |
             Q(proveedor__icontains=query)
         )
-    
+
     if proveedor:
         materias_primas = materias_primas.filter(proveedor__icontains=proveedor)
-    
+
     if estado_stock:
         if estado_stock == 'agotado':
             materias_primas = materias_primas.filter(stock_actual=0)
@@ -375,28 +376,28 @@ def lista_materias_primas(request):
             materias_primas = materias_primas.filter(stock_actual__gt=0, stock_actual__lte=F('stock_minimo'))
         elif estado_stock == 'normal':
             materias_primas = materias_primas.filter(stock_actual__gt=F('stock_minimo'))
-    
+
     # Estadísticas para KPIs
     total_materias = MateriaPrima.objects.filter(activo=True).count()
     con_stock = MateriaPrima.objects.filter(activo=True, stock_actual__gt=0).count()
     stock_bajo = MateriaPrima.objects.filter(
-        activo=True, 
-        stock_actual__gt=0, 
+        activo=True,
+        stock_actual__gt=0,
         stock_actual__lte=F('stock_minimo')
     ).count()
     valor_total = MateriaPrima.objects.filter(activo=True).aggregate(
         total=Sum(F('stock_actual') * F('costo_unitario'))
     )['total'] or 0
-    
+
     stats = {
         'con_stock': con_stock,
         'stock_bajo': stock_bajo,
         'valor_total': valor_total
     }
-    
+
     # Obtener proveedores únicos para el filtro
     proveedores = MateriaPrima.objects.filter(activo=True).values_list('proveedor', flat=True).distinct().exclude(proveedor__isnull=True).exclude(proveedor='')
-    
+
     context = {
         'materias_primas': materias_primas,
         'proveedores': proveedores,
@@ -405,7 +406,7 @@ def lista_materias_primas(request):
         'proveedor_seleccionado': proveedor or '',
         'estado_stock_seleccionado': estado_stock or '',
     }
-    
+
     return render(request, 'gestion/materias_primas/lista_simple.html', context)
 
 
@@ -413,15 +414,16 @@ def lista_materias_primas(request):
 def lista_inventario(request):
     """Vista de inventario optimizada - usa InventarioService para KPIs inteligentes."""
     try:
-        from gestion.services.inventario_service import InventarioService
         from django.core.paginator import Paginator
-        
+
+        from gestion.services.inventario_service import InventarioService
+
         # Inicializar servicio de inventario
         service = InventarioService()
-        
+
         # Obtener KPIs inteligentes del servicio
         kpis = service.get_kpis_inventario()
-        
+
         # Reutilizar lógica existente con paginación
         materias_primas = MateriaPrima.objects.filter(activo=True).order_by('nombre')
         query = request.GET.get('q', '')
@@ -444,7 +446,7 @@ def lista_inventario(request):
                 materias_primas = materias_primas.filter(stock_actual=0)
             elif estado_stock == 'bajo':
                 materias_primas = materias_primas.filter(
-                    stock_actual__gt=0, 
+                    stock_actual__gt=0,
                     stock_actual__lte=F('stock_minimo')
                 )
             elif estado_stock == 'normal':
@@ -480,7 +482,7 @@ def lista_inventario(request):
         }
 
         return render(request, 'modules/inventario/lista_inventario.html', context)
-        
+
     except Exception as e:
         messages.error(request, f'Error al cargar inventario: {str(e)}')
         return redirect('gestion:panel_control')
@@ -667,24 +669,24 @@ def exportar_materias_primas_excel(request):
     try:
         import openpyxl
         from openpyxl.styles import Font, PatternFill
-        
+
         # Crear workbook
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = "Materias Primas"
-        
+
         # Headers
         headers = ['ID', 'Nombre', 'Descripción', 'Proveedor', 'Costo Unitario', 'Stock Actual', 'Stock Mínimo', 'Unidad Medida', 'Valor Total']
         ws.append(headers)
-        
+
         # Dar formato a headers
         header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
         header_font = Font(bold=True, color="FFFFFF")
-        
+
         for cell in ws[1]:
             cell.fill = header_fill
             cell.font = header_font
-        
+
         # Agregar datos
         materias_primas = MateriaPrima.objects.filter(activo=True)
         for mp in materias_primas:
@@ -699,7 +701,7 @@ def exportar_materias_primas_excel(request):
                 mp.unidad_medida,
                 float(mp.valor_total_stock),
             ])
-        
+
         # Ajustar ancho de columnas
         ws.column_dimensions['A'].width = 8
         ws.column_dimensions['B'].width = 25
@@ -710,12 +712,12 @@ def exportar_materias_primas_excel(request):
         ws.column_dimensions['G'].width = 15
         ws.column_dimensions['H'].width = 15
         ws.column_dimensions['I'].width = 15
-        
+
         # Crear respuesta
         response = HttpResponse(content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
         response['Content-Disposition'] = f'attachment; filename="materias_primas_{datetime.now().strftime("%Y%m%d")}.xlsx"'
         wb.save(response)
-        
+
         return response
     except Exception as e:
         messages.error(request, f'Error al exportar materias primas: {str(e)}')
@@ -739,7 +741,7 @@ def reporte_stock_materias_primas(request):
             stock_actual__lte=models.F('stock_minimo') * 2
         )
         stock_normal = materias_primas.exclude(
-            id__in=list(stock_critico.values_list('id', flat=True)) + 
+            id__in=list(stock_critico.values_list('id', flat=True)) +
                    list(stock_bajo.values_list('id', flat=True))
         )
         # Cálculo de valores totales y críticos

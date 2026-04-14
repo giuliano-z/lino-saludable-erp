@@ -3,14 +3,19 @@ Servicio de Inventario - Métricas Predictivas y Análisis de Stock
 Proporciona indicadores avanzados de gestión de inventario
 """
 
-from decimal import Decimal
-from django.db.models import Sum, Avg, Count, F, Q
-from django.utils import timezone
-from datetime import timedelta
 import statistics
+from datetime import timedelta
+from decimal import Decimal
+
+from django.db.models import F, Q, Sum
+from django.utils import timezone
 
 from gestion.models import (
-    Producto, VentaDetalle, Compra, ConfiguracionCostos, MateriaPrima
+    Compra,
+    ConfiguracionCostos,
+    MateriaPrima,
+    Producto,
+    VentaDetalle,
 )
 
 
@@ -19,12 +24,12 @@ class InventarioService:
     Servicio centralizado para análisis de inventario.
     Métricas predictivas: rotación, cobertura, valor, etc.
     """
-    
+
     def __init__(self):
         self.hoy = timezone.now().date()
         self.inicio_mes = self.hoy.replace(day=1)
         self._config = None
-    
+
     @property
     def config(self):
         """Lazy loading de configuración"""
@@ -33,7 +38,7 @@ class InventarioService:
             if self._config is None:
                 self._config = ConfiguracionCostos.objects.create()
         return self._config
-    
+
     def get_kpis_inventario(self):
         """
         Obtiene los 4 KPIs principales de inventario.
@@ -46,7 +51,7 @@ class InventarioService:
         cobertura = self._calcular_cobertura_dias()
         # Agregar sparkline sin causar recursión
         cobertura['sparkline'] = self._get_sparkline_cobertura(cobertura.get('dias', 30))
-        
+
         return {
             'cobertura_dias': cobertura,
             'stock_critico': self._contar_stock_critico(),
@@ -54,7 +59,7 @@ class InventarioService:
             'valor_total': self._calcular_valor_inventario(),
             'rotacion': self._calcular_rotacion_inventario()
         }
-    
+
     def _calcular_cobertura_dias(self):
         """
         Calcula la cobertura promedio del inventario en días.
@@ -68,29 +73,29 @@ class InventarioService:
             dict con días promedio, estado y detalle
         """
         productos = Producto.objects.filter(stock__gt=0).select_related()
-        
+
         if not productos.exists():
             return {
                 'dias': 0,
                 'estado': 'sin_stock',
                 'mensaje': 'No hay productos en stock'
             }
-        
+
         coberturas = []
         productos_criticos = 0
-        
+
         for producto in productos:
             # Calcular ventas diarias promedio del último mes
             ventas_diarias = self._calcular_ventas_diarias_promedio(producto)
-            
+
             if ventas_diarias > 0:
                 cobertura = producto.stock / ventas_diarias
                 coberturas.append(cobertura)
-                
+
                 # Contar productos con poca cobertura (< objetivo)
                 if cobertura < self.config.cobertura_objetivo_dias:
                     productos_criticos += 1
-        
+
         if not coberturas:
             # Hay stock pero no hay ventas históricas
             return {
@@ -98,11 +103,11 @@ class InventarioService:
                 'estado': 'sin_ventas',
                 'mensaje': 'Stock disponible sin historial de ventas'
             }
-        
+
         # Usar mediana (más robusta que promedio)
         cobertura_promedio = statistics.median(coberturas)
         objetivo = self.config.cobertura_objetivo_dias
-        
+
         # Determinar estado
         if cobertura_promedio < objetivo * 0.5:
             estado = 'critico'
@@ -116,7 +121,7 @@ class InventarioService:
         else:
             estado = 'saludable'
             mensaje = 'Cobertura óptima'
-        
+
         return {
             'dias': round(cobertura_promedio, 1),
             'objetivo': objetivo,
@@ -125,7 +130,7 @@ class InventarioService:
             'productos_criticos': productos_criticos
             # sparkline se agrega en get_kpis_inventario() para evitar recursión
         }
-    
+
     def _calcular_ventas_diarias_promedio(self, producto, dias=30):
         """
         Calcula el promedio de ventas diarias de un producto.
@@ -138,17 +143,17 @@ class InventarioService:
             float con unidades vendidas por día
         """
         desde = self.hoy - timedelta(days=dias)
-        
+
         total_vendido = VentaDetalle.objects.filter(
             producto=producto,
             venta__fecha__date__gte=desde,
             venta__fecha__date__lte=self.hoy,
             venta__eliminada=False
         ).aggregate(total=Sum('cantidad'))['total'] or 0
-        
+
         # Dividir por días reales del período
         return float(total_vendido) / dias if dias > 0 else 0
-    
+
     def _contar_stock_critico(self):
         """
         Cuenta MATERIAS PRIMAS con stock crítico (≤ stock_minimo).
@@ -157,25 +162,25 @@ class InventarioService:
             dict con cantidad, porcentaje, lista de materias primas y estado
         """
         from gestion.models import MateriaPrima
-        
+
         # Total de materias primas activas
         total_mps = MateriaPrima.objects.filter(activo=True).count()
-        
+
         # Críticos = stock actual <= stock mínimo (incluye agotados)
         criticos = MateriaPrima.objects.filter(
             activo=True,
             stock_actual__lte=F('stock_minimo')
         ).select_related()
-        
+
         cantidad = criticos.count()
-        
+
         # Calcular porcentaje
         porcentaje = (cantidad / total_mps * 100) if total_mps > 0 else 0
-        
+
         # Contar agotados vs solo bajos
         agotados = criticos.filter(stock_actual=0).count()
         solo_bajos = cantidad - agotados
-        
+
         return {
             'cantidad': cantidad,
             'porcentaje': round(porcentaje, 1),
@@ -184,7 +189,7 @@ class InventarioService:
             'productos': list(criticos[:5]),  # Top 5 para mostrar
             'estado': 'critico' if agotados > 0 else ('warning' if solo_bajos > 0 else 'normal')
         }
-    
+
     def _dias_desde_ultima_compra(self):
         """
         Calcula días transcurridos desde la última compra.
@@ -194,7 +199,7 @@ class InventarioService:
             dict con días, frecuencia y predicción
         """
         ultima_compra = Compra.objects.order_by('-fecha_compra').first()
-        
+
         if not ultima_compra:
             return {
                 'dias': None,
@@ -203,23 +208,23 @@ class InventarioService:
                 'proxima_estimada': None,
                 'estado': 'sin_datos'
             }
-        
+
         dias = (self.hoy - ultima_compra.fecha_compra).days
-        
+
         # Calcular frecuencia de compras (últimos 3 meses)
         hace_3_meses = self.hoy - timedelta(days=90)
         total_compras = Compra.objects.filter(
             fecha_compra__gte=hace_3_meses
         ).count()
-        
+
         frecuencia_dias = 90 / total_compras if total_compras > 0 else None
-        
+
         # Estimar próxima compra
         proxima_estimada = None
         if frecuencia_dias:
             proxima_estimada = dias - frecuencia_dias
             proxima_estimada = round(proxima_estimada)
-        
+
         # Determinar estado
         if frecuencia_dias:
             if dias > frecuencia_dias * 1.5:
@@ -230,7 +235,7 @@ class InventarioService:
                 estado = 'normal'
         else:
             estado = 'normal'
-        
+
         return {
             'dias': dias,
             'dias_desde': dias,  # Alias para compatibilidad
@@ -239,7 +244,7 @@ class InventarioService:
             'proxima_estimada': proxima_estimada,
             'estado': estado
         }
-    
+
     def _calcular_valor_inventario(self):
         """
         Calcula el valor total del inventario de MATERIAS PRIMAS.
@@ -249,10 +254,10 @@ class InventarioService:
         """
         # Calcular valor de MATERIAS PRIMAS (no productos elaborados)
         materias_primas = MateriaPrima.objects.filter(activo=True, stock_actual__gt=0)
-        
+
         valor_total = Decimal('0')
         cantidad_items = 0
-        
+
         for mp in materias_primas:
             try:
                 # Valor = stock_actual * costo_unitario
@@ -262,7 +267,7 @@ class InventarioService:
                     cantidad_items += 1
             except Exception:
                 continue
-        
+
         return {
             'valor': float(valor_total.quantize(Decimal('0.01'))),
             'total': float(valor_total.quantize(Decimal('0.01'))),  # Alias para compatibilidad
@@ -272,7 +277,7 @@ class InventarioService:
                 (valor_total / cantidad_items).quantize(Decimal('0.01'))
             ) if cantidad_items > 0 else 0
         }
-    
+
     def _calcular_rotacion_inventario(self):
         """
         Calcula la rotación de inventario del mes.
@@ -287,13 +292,13 @@ class InventarioService:
         """
         # Valor de inventario actual
         inventario_actual = self._calcular_valor_inventario()['total']
-        
+
         # Costo de productos vendidos este mes
         productos_vendidos = VentaDetalle.objects.filter(
             venta__fecha__date__gte=self.inicio_mes,
             venta__eliminada=False
         ).select_related('producto')
-        
+
         costo_vendido = Decimal('0')
         for detalle in productos_vendidos:
             try:
@@ -301,16 +306,16 @@ class InventarioService:
                 costo_vendido += costo * detalle.cantidad
             except Exception:
                 continue
-        
+
         # Calcular rotación (simplificado: inventario actual como promedio)
         # TODO: Mejorar usando inventario inicial + final / 2
         rotacion = (
             float((costo_vendido / Decimal(str(inventario_actual))).quantize(Decimal('0.01')))
             if inventario_actual > 0 else 0
         )
-        
+
         objetivo = float(self.config.rotacion_objetivo)
-        
+
         # Determinar estado
         if rotacion < objetivo * 0.5:
             estado = 'muy_bajo'
@@ -324,7 +329,7 @@ class InventarioService:
         else:
             estado = 'optimo'
             mensaje = 'Rotación saludable'
-        
+
         # Identificar productos con rotación lenta
         productos_rotacion_lenta = []
         if rotacion < objetivo:
@@ -341,7 +346,7 @@ class InventarioService:
             productos_rotacion_lenta = [
                 p for p in productos if (p.ventas_mes or 0) == 0
             ]
-        
+
         return {
             'valor': rotacion,
             'veces': rotacion,  # Alias para compatibilidad
@@ -351,7 +356,7 @@ class InventarioService:
             'costo_vendido_mes': float(costo_vendido.quantize(Decimal('0.01'))),
             'productos_rotacion_lenta': productos_rotacion_lenta
         }
-    
+
     def _get_sparkline_cobertura(self, cobertura_dias=None):
         """
         Genera datos de sparkline para cobertura de últimos 7 días.
@@ -366,16 +371,16 @@ class InventarioService:
         # Si no se proporciona valor, usar un valor por defecto seguro
         if cobertura_dias is None:
             cobertura_dias = 30  # valor por defecto
-        
+
         sparkline = []
         for i in range(7):
             # Pequeña variación ±10%
             variacion = (i - 3) * 0.03
             valor = cobertura_dias * (1 + variacion)
             sparkline.append(round(valor, 1))
-        
+
         return sparkline
-    
+
     def get_productos_rotacion_lenta(self, limit=10):
         """
         Identifica productos con rotación lenta (poco vendidos).
@@ -388,7 +393,7 @@ class InventarioService:
             list de productos con baja rotación
         """
         hace_60_dias = self.hoy - timedelta(days=60)
-        
+
         # Productos con stock pero sin ventas en 60 días
         productos = Producto.objects.filter(
             stock__gt=0
@@ -403,17 +408,17 @@ class InventarioService:
         ).filter(
             Q(ventas_60d__isnull=True) | Q(ventas_60d=0)
         ).select_related()
-        
+
         resultado = []
         for producto in productos[:limit]:
             costo = producto.calcular_costo_unitario()
             valor_inmovilizado = costo * producto.stock
-            
+
             resultado.append({
                 'producto': producto,
                 'stock': producto.stock,
                 'dias_sin_venta': 60,  # Simplificado
                 'valor_inmovilizado': float(valor_inmovilizado.quantize(Decimal('0.01')))
             })
-        
+
         return resultado

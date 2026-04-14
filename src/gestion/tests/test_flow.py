@@ -1,7 +1,17 @@
-from django.test import TestCase
-from django.contrib.auth.models import User
-from gestion.models import MateriaPrima, Producto, ProductoMateriaPrima, Compra, Venta, VentaDetalle
 from decimal import Decimal
+
+from django.contrib.auth.models import User
+from django.test import TestCase
+
+from gestion.models import (
+    Compra,
+    MateriaPrima,
+    Producto,
+    ProductoMateriaPrima,
+    Venta,
+    VentaDetalle,
+)
+
 
 class FlujoCompletoTest(TestCase):
     def setUp(self):

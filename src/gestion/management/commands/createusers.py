@@ -1,6 +1,7 @@
-from django.core.management.base import BaseCommand
-from django.contrib.auth.models import User
 import os
+
+from django.contrib.auth.models import User
+from django.core.management.base import BaseCommand
 
 
 class Command(BaseCommand):
@@ -10,7 +11,7 @@ class Command(BaseCommand):
         self.stdout.write(self.style.WARNING('=' * 60))
         self.stdout.write(self.style.WARNING('👥 CREANDO USUARIOS SUPERADMIN'))
         self.stdout.write(self.style.WARNING('=' * 60))
-        
+
         users = [
             {
                 'username': 'sister_emprendedora',
@@ -23,7 +24,7 @@ class Command(BaseCommand):
                 'password': os.environ.get('ADMIN_PASSWORD_2', 'changeme')
             }
         ]
-        
+
         created_count = 0
         for user_data in users:
             username = user_data['username']
@@ -38,7 +39,7 @@ class Command(BaseCommand):
                 self.stdout.write(self.style.SUCCESS(f'✅ Usuario {username} creado'))
                 self.stdout.write(f'   📧 Email: {user_data["email"]}')
                 created_count += 1
-        
+
         if created_count > 0:
             self.stdout.write('')
             self.stdout.write(self.style.WARNING('⚠️  IMPORTANTE: Cambiar contraseñas inmediatamente!'))

@@ -1,0 +1,16 @@
+[tool.ruff]
+line-length = 88
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]
+exclude = [
+    "venv/",
+    "staticfiles/",
+    "*/migrations/*",
+    ".git/",
+]
+
+[tool.ruff.format]
+quote-style = "double"

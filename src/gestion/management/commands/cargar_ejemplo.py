@@ -2,15 +2,22 @@
 Comando Django para cargar datos de ejemplo realistas
 Uso: python manage.py cargar_ejemplo
 """
-from django.core.management.base import BaseCommand
-from django.contrib.auth import get_user_model
-from gestion.models import (
-    Producto, MateriaPrima, Compra, Venta, VentaDetalle, 
-    Receta, RecetaMateriaPrima
-)
+from datetime import timedelta
 from decimal import Decimal
-from datetime import datetime, timedelta
+
+from django.contrib.auth import get_user_model
+from django.core.management.base import BaseCommand
 from django.utils import timezone
+
+from gestion.models import (
+    Compra,
+    MateriaPrima,
+    Producto,
+    Receta,
+    RecetaMateriaPrima,
+    Venta,
+    VentaDetalle,
+)
 
 User = get_user_model()
 
@@ -28,7 +35,7 @@ class Command(BaseCommand):
 
         # ===== 1. MATERIAS PRIMAS =====
         self.stdout.write('📦 Creando materias primas...')
-        
+
         harina_integral = MateriaPrima.objects.create(
             nombre='Harina Integral Orgánica',
             unidad_medida='kg',
@@ -37,7 +44,7 @@ class Command(BaseCommand):
             stock_minimo=Decimal('10.00'),
             proveedor='Alimentos Naturales SA'
         )
-        
+
         aceite_coco = MateriaPrima.objects.create(
             nombre='Aceite de Coco Virgen',
             unidad_medida='lt',
@@ -46,7 +53,7 @@ class Command(BaseCommand):
             stock_minimo=Decimal('5.00'),
             proveedor='Orgánicos del Sur'
         )
-        
+
         mani = MateriaPrima.objects.create(
             nombre='Maní sin Sal',
             unidad_medida='kg',
@@ -69,14 +76,14 @@ class Command(BaseCommand):
 
         # ===== 2. COMPRAS =====
         self.stdout.write('🛒 Registrando compras...')
-        
+
         Compra.objects.create(
             proveedor='Alimentos Naturales SA',
             materia_prima=harina_integral,
             cantidad_mayoreo=Decimal('50.00'),
             precio_mayoreo=Decimal('22500.00'),  # 450 x 50
         )
-        
+
         Compra.objects.create(
             proveedor='Orgánicos del Sur',
             materia_prima=aceite_coco,
@@ -95,18 +102,18 @@ class Command(BaseCommand):
 
         # ===== 3. RECETAS =====
         self.stdout.write('📖 Creando recetas...')
-        
+
         receta_barras = Receta.objects.create(
             nombre='Barras de Cereal Integral',
             descripcion='Barras nutritivas con avena, maní y aceite de coco. Rinde 20 unidades.'
         )
-        
+
         RecetaMateriaPrima.objects.create(
             receta=receta_barras,
             materia_prima=avena,
             cantidad=Decimal('2.00')
         )
-        
+
         RecetaMateriaPrima.objects.create(
             receta=receta_barras,
             materia_prima=mani,
@@ -140,15 +147,15 @@ class Command(BaseCommand):
 
         # ===== 4. PRODUCTOS =====
         self.stdout.write('🏷️  Creando productos...')
-        
+
         # Calcular costos de recetas
         costo_barras = sum(
-            ing.cantidad * ing.materia_prima.costo_unitario 
+            ing.cantidad * ing.materia_prima.costo_unitario
             for ing in receta_barras.ingredientes.all()
         ) / receta_barras.rendimiento
 
         costo_crackers = sum(
-            ing.cantidad * ing.materia_prima.costo_unitario 
+            ing.cantidad * ing.materia_prima.costo_unitario
             for ing in receta_crackers.ingredientes.all()
         ) / receta_crackers.rendimiento
 
@@ -189,7 +196,7 @@ class Command(BaseCommand):
 
         # ===== 5. VENTAS =====
         self.stdout.write('💰 Registrando ventas...')
-        
+
         # Venta 1 - Hace 3 días
         venta1 = Venta.objects.create(
             fecha=timezone.now() - timedelta(days=3),
@@ -197,7 +204,7 @@ class Command(BaseCommand):
             usuario=admin,
             total=Decimal('0.00')
         )
-        
+
         VentaDetalle.objects.create(
             venta=venta1,
             producto=producto_barras,
@@ -205,7 +212,7 @@ class Command(BaseCommand):
             precio_unitario=producto_barras.precio,
             subtotal=producto_barras.precio * 2
         )
-        
+
         VentaDetalle.objects.create(
             venta=venta1,
             producto=producto_mani,
@@ -213,7 +220,7 @@ class Command(BaseCommand):
             precio_unitario=producto_mani.precio,
             subtotal=producto_mani.precio * 3
         )
-        
+
         venta1.total = sum(d.subtotal for d in venta1.detalles.all())
         venta1.save()
 
@@ -224,7 +231,7 @@ class Command(BaseCommand):
             usuario=admin,
             total=Decimal('0.00')
         )
-        
+
         VentaDetalle.objects.create(
             venta=venta2,
             producto=producto_crackers,
@@ -232,7 +239,7 @@ class Command(BaseCommand):
             precio_unitario=producto_crackers.precio,
             subtotal=producto_crackers.precio * 4
         )
-        
+
         venta2.total = sum(d.subtotal for d in venta2.detalles.all())
         venta2.save()
 
@@ -243,7 +250,7 @@ class Command(BaseCommand):
             usuario=admin,
             total=Decimal('0.00')
         )
-        
+
         VentaDetalle.objects.create(
             venta=venta3,
             producto=producto_barras,
@@ -267,7 +274,7 @@ class Command(BaseCommand):
             precio_unitario=producto_mani.precio,
             subtotal=producto_mani.precio * 6
         )
-        
+
         venta3.total = sum(d.subtotal for d in venta3.detalles.all())
         venta3.save()
 
@@ -275,7 +282,7 @@ class Command(BaseCommand):
 
         # ===== RESUMEN =====
         self.stdout.write(self.style.SUCCESS('\n✨ Datos de ejemplo cargados exitosamente!\n'))
-        
+
         total_ingresos = sum(v.total for v in Venta.objects.all())
         total_gastos = sum(c.precio_mayoreo for c in Compra.objects.all())
         ganancia = total_ingresos - total_gastos
@@ -287,8 +294,8 @@ class Command(BaseCommand):
         self.stdout.write(f'  - Productos: {Producto.objects.count()}')
         self.stdout.write(f'  - Ventas: {Venta.objects.count()} (${total_ingresos:,.0f})')
         self.stdout.write(self.style.SUCCESS(f'  - Ganancia: ${ganancia:,.0f}'))
-        
+
         margen = (ganancia / total_ingresos * 100) if total_ingresos > 0 else 0
         self.stdout.write(f'  - Margen: {margen:.1f}%')
-        
+
         self.stdout.write(self.style.SUCCESS('\n🚀 Puedes probar los dashboards ahora!\n'))

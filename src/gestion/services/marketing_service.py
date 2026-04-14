@@ -2,22 +2,24 @@
 Marketing Service - Análisis de tendencias y cross-selling
 """
 
-from decimal import Decimal
+from collections import Counter
 from datetime import timedelta
-from django.db.models import Sum, Count, F, Q, Avg
+from decimal import Decimal
+
+from django.db.models import Count, F, Sum
 from django.utils import timezone
+
 from gestion.models import Producto, Venta, VentaDetalle
-from collections import defaultdict, Counter
 
 
 class MarketingService:
     """Servicio para análisis de marketing y recomendaciones"""
-    
+
     def __init__(self):
         self.hoy = timezone.now().date()
         self.inicio_mes = self.hoy.replace(day=1)
         self.inicio_semana = self.hoy - timedelta(days=6)
-    
+
     def get_productos_trending(self, limit=5):
         """
         Análisis de tendencias de demanda
@@ -33,11 +35,11 @@ class MarketingService:
         ).values('producto').annotate(
             total_semana=Sum('cantidad')
         )
-        
+
         # Ventas semana anterior
         inicio_semana_anterior = self.inicio_semana - timedelta(days=7)
         fin_semana_anterior = self.inicio_semana - timedelta(days=1)
-        
+
         ventas_semana_anterior = VentaDetalle.objects.filter(
             venta__fecha__date__gte=inicio_semana_anterior,
             venta__fecha__date__lte=fin_semana_anterior,
@@ -45,22 +47,22 @@ class MarketingService:
         ).values('producto').annotate(
             total_anterior=Sum('cantidad')
         )
-        
+
         # Crear diccionario de semana anterior
         dict_anterior = {item['producto']: item['total_anterior'] for item in ventas_semana_anterior}
-        
+
         # Calcular tendencias
         trending = []
         for item in ventas_semana:
             producto_id = item['producto']
             total_actual = item['total_semana']
             total_anterior = dict_anterior.get(producto_id, 0)
-            
+
             if total_anterior > 0:
                 variacion = ((total_actual - total_anterior) / total_anterior) * 100
             else:
                 variacion = 100 if total_actual > 0 else 0
-            
+
             # Solo productos con tendencia positiva significativa
             if variacion >= 10:  # Mínimo 10% de crecimiento
                 try:
@@ -76,11 +78,11 @@ class MarketingService:
                     })
                 except Producto.DoesNotExist:
                     continue
-        
+
         # Ordenar por variación y limitar
         trending.sort(key=lambda x: x['variacion'], reverse=True)
         return trending[:limit]
-    
+
     def get_hero_products(self, limit=3):
         """
         Productos "héroe" del mes
@@ -103,19 +105,19 @@ class MarketingService:
             cantidad_vendida=Sum('cantidad'),
             ingresos=Sum(F('cantidad') * F('precio_unitario'))
         )
-        
+
         # Calcular margen de ganancia total
         hero_products = []
         for item in ventas_mes:
             precio = Decimal(str(item['producto__precio']))
             costo = Decimal(str(item['producto__costo_base'] or 0))
             cantidad = item['cantidad_vendida']
-            
+
             if precio > 0 and costo > 0:
                 margen_unitario = precio - costo
                 ganancia_total = margen_unitario * cantidad
                 margen_porcentaje = ((precio - costo) / precio) * 100
-                
+
                 hero_products.append({
                     'producto_id': item['producto__id'],
                     'producto_nombre': item['producto__nombre'],
@@ -126,10 +128,10 @@ class MarketingService:
                     'stock_actual': item['producto__stock'],
                     'ranking': 0  # Se asignará después
                 })
-        
+
         # Ordenar por ganancia total
         hero_products.sort(key=lambda x: x['ganancia_total'], reverse=True)
-        
+
         # Asignar ranking y emojis
         for i, producto in enumerate(hero_products[:limit], 1):
             producto['ranking'] = i
@@ -142,9 +144,9 @@ class MarketingService:
             elif i == 3:
                 producto['emoji'] = '🥉'
                 producto['badge'] = 'Top 3'
-        
+
         return hero_products[:limit]
-    
+
     def get_cross_selling_recommendations(self, producto_id=None, limit=5):
         """
         Cross-Selling Inteligente
@@ -163,7 +165,7 @@ class MarketingService:
                 detalles__producto_id=producto_id,
                 eliminada=False
             ).values_list('id', flat=True)
-            
+
             # Otros productos vendidos en las mismas ventas
             productos_relacionados = VentaDetalle.objects.filter(
                 venta_id__in=ventas_con_producto
@@ -175,14 +177,14 @@ class MarketingService:
             ).annotate(
                 coincidencias=Count('venta', distinct=True)
             )
-            
+
             total_ventas_base = len(ventas_con_producto)
-            
+
             relaciones = []
             for item in productos_relacionados:
                 if total_ventas_base > 0:
                     porcentaje_coincidencia = (item['coincidencias'] / total_ventas_base) * 100
-                    
+
                     if porcentaje_coincidencia >= 30:  # Mínimo 30% coincidencia
                         relaciones.append({
                             'producto_id': item['producto__id'],
@@ -191,26 +193,26 @@ class MarketingService:
                             'porcentaje': float(porcentaje_coincidencia),
                             'emoji': '⭐' if porcentaje_coincidencia >= 70 else '📦'
                         })
-            
+
             relaciones.sort(key=lambda x: x['porcentaje'], reverse=True)
             return relaciones[:limit]
-        
+
         else:
             # Cross-selling general (pares más comunes)
             return self._get_pares_frecuentes(limit)
-    
+
     def _get_pares_frecuentes(self, limit=5):
         """
         Encuentra los pares de productos que más se venden juntos
         """
         # Obtener todas las ventas con múltiples items
         ventas = Venta.objects.filter(eliminada=False).prefetch_related('detalles')
-        
+
         pares_contador = Counter()
-        
+
         for venta in ventas:
             productos_en_venta = list(venta.detalles.values_list('producto__id', 'producto__nombre'))
-            
+
             # Generar todos los pares posibles
             if len(productos_en_venta) >= 2:
                 for i, (id1, nombre1) in enumerate(productos_en_venta):
@@ -218,7 +220,7 @@ class MarketingService:
                         # Ordenar para evitar duplicados (A,B) y (B,A)
                         par = tuple(sorted([(id1, nombre1), (id2, nombre2)], key=lambda x: x[0]))
                         pares_contador[par] += 1
-        
+
         # Convertir a lista ordenada
         pares_frecuentes = []
         for par, frecuencia in pares_contador.most_common(limit):
@@ -231,9 +233,9 @@ class MarketingService:
                 'frecuencia': frecuencia,
                 'recomendacion': f'Combo: {nombre1} + {nombre2}'
             })
-        
+
         return pares_frecuentes
-    
+
     def get_productos_baja_rotacion(self, dias_sin_venta=60, limit=10):
         """
         Productos con baja rotación (para promoción)
@@ -246,10 +248,10 @@ class MarketingService:
             list de productos con baja rotación
         """
         fecha_limite = timezone.now() - timedelta(days=dias_sin_venta)
-        
+
         # Productos con stock
         productos_con_stock = Producto.objects.filter(stock__gt=0)
-        
+
         baja_rotacion = []
         for producto in productos_con_stock:
             # Última venta del producto
@@ -257,12 +259,12 @@ class MarketingService:
                 producto=producto,
                 venta__eliminada=False
             ).order_by('-venta__fecha').first()
-            
+
             if not ultima_venta or ultima_venta.venta.fecha < fecha_limite:
                 dias_sin_venta_real = (timezone.now().date() - ultima_venta.venta.fecha.date()).days if ultima_venta else 999
                 costo_real = producto.calcular_costo_real()
                 capital_inmovilizado = costo_real * producto.stock
-                
+
                 baja_rotacion.append({
                     'producto_id': producto.id,
                     'producto_nombre': producto.nombre,
@@ -272,7 +274,7 @@ class MarketingService:
                     'descuento_sugerido': 25 if dias_sin_venta_real > 90 else 15,
                     'emoji': '💤' if dias_sin_venta_real > 90 else '📦'
                 })
-        
+
         # Ordenar por capital inmovilizado (mayor impacto primero)
         baja_rotacion.sort(key=lambda x: x['capital_inmovilizado'], reverse=True)
         return baja_rotacion[:limit]

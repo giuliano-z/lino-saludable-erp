@@ -1,33 +1,55 @@
 # ==================== IMPORTS PRINCIPALES ====================
-from django.shortcuts import render, redirect, get_object_or_404
-from django.contrib.auth.decorators import login_required
-from django.contrib import messages
-from django.http import JsonResponse, HttpResponse
-from decimal import Decimal
-from django.urls import reverse
-from django.db import models, transaction
-from django.utils import timezone
-from django.views.decorators.http import require_GET, require_http_methods, require_POST
-from django.views.decorators.csrf import csrf_exempt
-from django.core.paginator import Paginator
-from .models import Producto, Venta, Compra, MateriaPrima, ProductoMateriaPrima, MovimientoMateriaPrima, PerfilUsuario, VentaDetalle, LoteMateriaPrima, Receta, RecetaMateriaPrima, AjusteInventario
-from .forms import ProductoForm, VentaForm, VentaDetalleFormSet, CompraForm, MateriaPrimaForm, ProductoMateriaPrimaForm, MovimientoMateriaPrimaForm, VentaConMateriasForm, BusquedaMateriaPrimaForm, RecetaForm, AjusteProductoForm, AjusteMateriaPrimaForm
-from .resources import ProductoResource, VentaResource
-from django.contrib.auth.models import User
-from django.db.models import Sum, Count, Q, F
-from datetime import timedelta, datetime
 import json
-from django.views.generic import TemplateView
-from django_ratelimit.decorators import ratelimit
+import traceback
+from datetime import datetime, timedelta
+from decimal import Decimal
+
 from django.conf import settings
+from django.contrib import messages
+from django.contrib.auth.decorators import login_required
+from django.core.paginator import Paginator
+from django.db import models, transaction
+from django.db.models import Count, F, Q, Sum
+from django.http import HttpResponse, JsonResponse
+from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
+from django.utils import timezone
+from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_http_methods, require_POST
+from django_ratelimit.decorators import ratelimit
+
+from .analytics import AnalyticsRentabilidad
+from .forms import (
+    AjusteMateriaPrimaForm,
+    AjusteProductoForm,
+    CompraForm,
+    MateriaPrimaForm,
+    MovimientoMateriaPrimaForm,
+    ProductoForm,
+    RecetaForm,
+    VentaConMateriasForm,
+    VentaDetalleFormSet,
+    VentaForm,
+)
+
 # 🔧 CORREGIDO: Eliminados imports duplicados (Decimal y timezone)
 # y mantuvimos models porque se usa para models.Sum, models.Count, models.F
-
 # ==================== IMPORTS PARA LOGGING ROBUSTO ====================
-from .logging_system import LinoLogger, log_business_operation, get_request_info
-from .analytics import get_analytics_dashboard, AnalyticsRentabilidad
-import logging
-import traceback
+from .logging_system import LinoLogger, get_request_info, log_business_operation
+from .models import (
+    AjusteInventario,
+    Compra,
+    MateriaPrima,
+    MovimientoMateriaPrima,
+    Producto,
+    ProductoMateriaPrima,
+    Receta,
+    RecetaMateriaPrima,
+    Venta,
+    VentaDetalle,
+)
+from .resources import ProductoResource, VentaResource
+
 
 # ==================== STUBS PARA VISTAS DE RECETAS ====================
 @login_required
@@ -42,20 +64,20 @@ def crear_receta(request):
                     receta.creador = request.user
                     receta.save()
                     form.save_m2m()  # Guardar relaciones ManyToMany para productos
-                    
+
                     # Procesar ingredientes dinámicos
                     procesar_ingredientes_receta(request.POST, receta)
-                    
+
                     messages.success(request, f'Receta "{receta.nombre}" creada exitosamente.')
                     return redirect('gestion:lista_recetas')
             except Exception as e:
                 messages.error(request, f'Error al crear la receta: {str(e)}')
     else:
         form = RecetaForm()
-    
+
     # Obtener todas las materias primas para el JavaScript
     materias_primas = MateriaPrima.objects.all().order_by('nombre')
-    
+
     context = {
         'form': form,
         'materias_primas': materias_primas,
@@ -66,18 +88,18 @@ def procesar_ingredientes_receta(post_data, receta):
     """Procesa los ingredientes dinámicos del formulario de receta."""
     # Limpiar ingredientes existentes
     RecetaMateriaPrima.objects.filter(receta=receta).delete()
-    
+
     # Procesar nuevos ingredientes
     index = 0
     while f'materia_prima_{index}' in post_data:
         materia_prima_id = post_data.get(f'materia_prima_{index}')
         cantidad = post_data.get(f'cantidad_{index}')
-        
+
         if materia_prima_id and cantidad:
             try:
                 materia_prima = MateriaPrima.objects.get(id=materia_prima_id)
                 cantidad_decimal = Decimal(cantidad)
-                
+
                 RecetaMateriaPrima.objects.create(
                     receta=receta,
                     materia_prima=materia_prima,
@@ -86,18 +108,18 @@ def procesar_ingredientes_receta(post_data, receta):
                 )
             except (MateriaPrima.DoesNotExist, ValueError, TypeError) as e:
                 raise Exception(f'Error al procesar ingrediente {index + 1}: {str(e)}')
-        
+
         index += 1
 
 @login_required
 def editar_receta(request, pk):
     """Vista para editar una receta existente."""
     receta = get_object_or_404(Receta, pk=pk)
-    
+
     if not request.user.has_perm('gestion.change_receta'):
         messages.error(request, 'No tienes permiso para editar recetas.')
         return redirect('gestion:lista_recetas')
-    
+
     if request.method == 'POST':
         form = RecetaForm(request.POST, instance=receta)
         if form.is_valid():
@@ -105,13 +127,13 @@ def editar_receta(request, pk):
                 with transaction.atomic():
                     receta = form.save(commit=False)
                     receta.save()
-                    
+
                     # Eliminar ingredientes existentes
                     RecetaMateriaPrima.objects.filter(receta=receta).delete()
-                    
+
                     # Procesar nuevos ingredientes
                     procesar_ingredientes_receta(request.POST, receta)
-                    
+
                     messages.success(request, 'Receta actualizada exitosamente.')
                     return redirect('gestion:lista_recetas')
             except Exception as e:
@@ -122,7 +144,7 @@ def editar_receta(request, pk):
                     messages.error(request, f'{form.fields[field].label}: {error}')
     else:
         form = RecetaForm(instance=receta)
-    
+
     # Obtener ingredientes actuales para mostrar en el formulario
     ingredientes_actuales = []
     for ingrediente in receta.recetamateriaprima_set.all():
@@ -133,7 +155,7 @@ def editar_receta(request, pk):
             'unidad': ingrediente.unidad,
             'costo': float(ingrediente.costo_ingrediente())
         })
-    
+
     context = {
         'form': form,
         'receta': receta,
@@ -147,11 +169,11 @@ def editar_receta(request, pk):
 def eliminar_receta(request, pk):
     """Vista para eliminar una receta."""
     receta = get_object_or_404(Receta, pk=pk)
-    
+
     if not request.user.has_perm('gestion.delete_receta'):
         messages.error(request, 'No tienes permiso para eliminar recetas.')
         return redirect('gestion:lista_recetas')
-    
+
     if request.method == 'POST':
         try:
             # Verificar si la receta está siendo usada por productos
@@ -161,20 +183,20 @@ def eliminar_receta(request, pk):
                 if productos_usando.count() > 3:
                     productos_nombres += f" y {productos_usando.count() - 3} más"
                 messages.error(
-                    request, 
+                    request,
                     f'No se puede eliminar la receta porque está siendo usada por los productos: {productos_nombres}'
                 )
                 return redirect('gestion:lista_recetas')
-            
+
             nombre_receta = receta.nombre
             receta.delete()
             messages.success(request, f'Receta "{nombre_receta}" eliminada exitosamente.')
-            
+
         except Exception as e:
             messages.error(request, f'Error al eliminar la receta: {str(e)}')
-        
+
         return redirect('gestion:lista_recetas')
-    
+
     # Para GET, mostrar página de confirmación
     context = {
         'receta': receta,
@@ -187,12 +209,12 @@ def eliminar_receta(request, pk):
 def detalle_receta(request, pk):
     """Vista para ver el detalle de una receta."""
     receta = get_object_or_404(Receta, pk=pk)
-    
+
     # Calcular información adicional
     total_ingredientes = receta.recetamateriaprima_set.count()
     costo_total = receta.costo_total()
     productos_usando = receta.productos.all()
-    
+
     # Obtener ingredientes con información detallada
     ingredientes = []
     for ingrediente in receta.recetamateriaprima_set.all():
@@ -204,11 +226,11 @@ def detalle_receta(request, pk):
             'costo_total': ingrediente.costo_ingrediente(),
             'porcentaje_costo': (ingrediente.costo_ingrediente() / costo_total * 100) if costo_total > 0 else 0
         })
-    
+
     # Preparar subtitle con estado e ingredientes
     estado_text = "Receta Activa" if receta.activa else "Receta Inactiva"
     subtitle_text = f"{estado_text} • {total_ingredientes} ingrediente(s)"
-    
+
     context = {
         'receta': receta,
         'ingredientes': ingredientes,
@@ -225,19 +247,20 @@ def detalle_receta(request, pk):
 @login_required
 def lista_recetas(request):
     """Vista para listar recetas con KPIs LINO V3"""
-    from gestion.utils.kpi_builder import prepare_recetas_kpis
     from django.core.paginator import Paginator
-    
+
+    from gestion.utils.kpi_builder import prepare_recetas_kpis
+
     recetas = Receta.objects.all().prefetch_related('productos', 'materias_primas')
-    
+
     # Preparar KPIs
     kpis = prepare_recetas_kpis(recetas)
-    
+
     # Paginación
     paginator = Paginator(recetas, 25)
     page_number = request.GET.get('page', 1)
     recetas_paginadas = paginator.get_page(page_number)
-    
+
     context = {
         'recetas': recetas_paginadas,
         'kpis': kpis,
@@ -297,7 +320,7 @@ def crear_compra(request):
     """
     request_info = get_request_info(request)
     LinoLogger.log_accion_admin(request.user, "INTENTO_CREAR_COMPRA", "Compra", 0)
-    
+
     if request.method == 'POST':
         form = CompraForm(request.POST)
         if form.is_valid():
@@ -308,54 +331,54 @@ def crear_compra(request):
                     cantidad = form.cleaned_data['cantidad_mayoreo']
                     precio_total = form.cleaned_data['precio_mayoreo']
                     proveedor = form.cleaned_data['proveedor']
-                    
+
                     # Validaciones adicionales
                     if cantidad <= 0:
                         LinoLogger.log_error_critico(
-                            "compras", "crear_compra", 
-                            f"Cantidad inválida: {cantidad}", 
+                            "compras", "crear_compra",
+                            f"Cantidad inválida: {cantidad}",
                             {"materia_prima": materia_prima.nombre, "usuario": request.user.username}
                         )
                         messages.error(request, 'La cantidad debe ser mayor a 0.')
                         return render(request, 'modules/compras/compras/crear.html', {'form': form})
-                    
+
                     if precio_total <= 0:
                         LinoLogger.log_error_critico(
-                            "compras", "crear_compra", 
-                            f"Precio inválido: {precio_total}", 
+                            "compras", "crear_compra",
+                            f"Precio inválido: {precio_total}",
                             {"materia_prima": materia_prima.nombre, "usuario": request.user.username}
                         )
                         messages.error(request, 'El precio debe ser mayor a 0.')
                         return render(request, 'modules/compras/compras/crear.html', {'form': form})
-                    
+
                     # Guardar información previa para logging
                     stock_anterior = materia_prima.stock_actual
                     costo_anterior = materia_prima.costo_unitario
-                    
+
                     # Guardar la compra (esto disparará la lógica en el modelo)
                     compra = form.save()
-                    
+
                     # Recargar la materia prima para obtener valores actualizados
                     materia_prima.refresh_from_db()
-                    
+
                     # Log de la compra registrada
                     LinoLogger.log_compra_registrada(
                         materia_prima.nombre, cantidad, precio_total, proveedor, request.user
                     )
-                    
+
                     # Log del cambio de stock
                     LinoLogger.log_stock_actualizado(
                         f"MP: {materia_prima.nombre}", stock_anterior, materia_prima.stock_actual,
                         f"Compra ID: {compra.id}", request.user
                     )
-                    
+
                     # Log del cambio de costo si cambió significativamente
                     if abs(costo_anterior - materia_prima.costo_unitario) > Decimal('0.01'):
                         LinoLogger.log_precio_actualizado(
-                            f"MP: {materia_prima.nombre}", costo_anterior, 
+                            f"MP: {materia_prima.nombre}", costo_anterior,
                             materia_prima.costo_unitario, request.user
                         )
-                    
+
                     # TODO: Implementar integración con sistema de caja/balance
                     # Ajustar caja/balance: disminuir caja por el monto de la compra
                     # from .models import Caja
@@ -363,21 +386,21 @@ def crear_compra(request):
                     # if caja:
                     #     caja.saldo -= compra.precio_mayoreo
                     #     caja.save()
-                    
+
                     messages.success(
-                        request, 
+                        request,
                         f'✅ Compra registrada correctamente. '
                         f'Stock actualizado: {materia_prima.nombre} '
                         f'({stock_anterior} → {materia_prima.stock_actual} {materia_prima.get_unidad_medida_display()})'
                     )
                     return redirect('gestion:lista_compras')
-                    
+
             except Exception as e:
                 # Log detallado del error
                 error_trace = traceback.format_exc()
                 LinoLogger.log_error_critico(
-                    "compras", "crear_compra", 
-                    f"Excepción no controlada: {str(e)}", 
+                    "compras", "crear_compra",
+                    f"Excepción no controlada: {str(e)}",
                     {"traceback": error_trace, "request_info": request_info}
                 )
                 messages.error(request, f'❌ Error crítico al registrar la compra. Contacte al administrador. Error: {str(e)}')
@@ -385,8 +408,8 @@ def crear_compra(request):
             # Log de errores de formulario
             form_errors = form.errors.as_json() if form.errors else "Sin errores"
             LinoLogger.log_error_critico(
-                "compras", "crear_compra", 
-                f"Formulario inválido: {form_errors}", 
+                "compras", "crear_compra",
+                f"Formulario inválido: {form_errors}",
                 {"usuario": request.user.username}
             )
             messages.error(request, 'Error al registrar la compra. Verifica los datos.')
@@ -394,7 +417,7 @@ def crear_compra(request):
         # GET request
         form = CompraForm()
         LinoLogger.business_logger.info(f"FORMULARIO_COMPRA_CARGADO - Usuario: {request.user.username}")
-    
+
     return render(request, 'modules/compras/compras/crear.html', {'form': form})
 
 # ==================== VISTAS DE COMPRAS AL MAYOREO ====================
@@ -452,14 +475,14 @@ def panel_control_original(request):
         mes_anterior = inicio_mes - timedelta(days=30)
         fin_mes_anterior = inicio_mes - timedelta(days=1)
         ventas_mes_anterior = Venta.objects.filter(
-            fecha__date__gte=mes_anterior, 
+            fecha__date__gte=mes_anterior,
             fecha__date__lte=fin_mes_anterior
         ).count()
         ingresos_mes_anterior = Venta.objects.filter(
-            fecha__date__gte=mes_anterior, 
+            fecha__date__gte=mes_anterior,
             fecha__date__lte=fin_mes_anterior
         ).aggregate(total=Sum('total'))['total'] or 0
-        
+
         # Calcular tendencias de manera más inteligente
         if ventas_mes_anterior > 0:
             tendencia_ventas = ((ventas_mes - ventas_mes_anterior) / ventas_mes_anterior) * 100
@@ -467,29 +490,29 @@ def panel_control_original(request):
             tendencia_ventas = 100  # 100% de aumento desde 0
         else:
             tendencia_ventas = 0  # Sin cambio (ambos son 0)
-            
+
         if ingresos_mes_anterior > 0:
             tendencia_ingresos = ((ingresos_mes - ingresos_mes_anterior) / ingresos_mes_anterior) * 100
         elif ingresos_mes > 0:
             tendencia_ingresos = 100  # 100% de aumento desde 0
         else:
             tendencia_ingresos = 0  # Sin cambio (ambos son 0)
-        
+
         # Limitar las tendencias a valores razonables (máximo ±999%)
         tendencia_ventas = max(-999, min(999, tendencia_ventas))
         tendencia_ingresos = max(-999, min(999, tendencia_ingresos))
-        
+
         # Productos más vendidos
         productos_mas_vendidos = VentaDetalle.objects.filter(
             venta__fecha__date__gte=inicio_mes
         ).values('producto__nombre').annotate(
             total_vendido=Sum('cantidad')
         ).order_by('-total_vendido')[:5]
-        
+
         # Margen de ganancia estimado (simplificado)
         margen_bruto = ingresos_mes - inversion_mes
         porcentaje_margen = (margen_bruto / max(ingresos_mes, 1)) * 100 if ingresos_mes > 0 else 0
-        
+
         # Alertas críticas
         productos_sin_stock = Producto.objects.filter(stock=0).count()
         materias_vencen_pronto = MateriaPrima.objects.filter(
@@ -501,20 +524,20 @@ def panel_control_original(request):
         try:
             from .analytics import AnalyticsRentabilidad
             analytics = AnalyticsRentabilidad()
-            
+
             # KPIs de rentabilidad para el dashboard principal
             kpis_rentabilidad = analytics.get_kpis_rentabilidad()
             alertas_rentabilidad = analytics.get_alertas_rentabilidad()
-            
+
             # Productos en pérdida y críticos para mostrar en dashboard
             productos_perdida = kpis_rentabilidad['productos_en_perdida']
             productos_criticos_rentabilidad = kpis_rentabilidad['productos_criticos']
             margen_promedio_negocio = kpis_rentabilidad['margen_promedio_ponderado']
-            
+
             # Top 3 alertas más críticas para mostrar en dashboard
             alertas_criticas_dashboard = [a for a in alertas_rentabilidad if a['severidad'] == 'critica'][:3]
-            
-        except Exception as e:
+
+        except Exception:
             # Si hay error en analytics, continuar sin rentabilidad
             productos_perdida = 0
             productos_criticos_rentabilidad = 0
@@ -580,20 +603,20 @@ def panel_control_clean(request):
         # Fecha actual y mes
         hoy = timezone.now().date()
         inicio_mes = hoy.replace(day=1)
-        
+
         # Ventas del mes
         ventas_mes = Venta.objects.filter(fecha__date__gte=inicio_mes)
         resumen_ventas_mes = ventas_mes.aggregate(total=Sum('total'), count=Count('id'))
         ventas_recientes = Venta.objects.prefetch_related('detalles__producto').order_by('-fecha')[:5]
-        
+
         # Valor del inventario simplificado
         valor_inventario = MateriaPrima.objects.aggregate(
             total=Sum(F('stock_actual') * F('costo_unitario'))
         )['total'] or 0
-        
+
         # Alertas de stock
         alertas_stock = productos_bajo_stock_count + productos_sin_stock.count()
-        
+
         context = {
             # KPIs principales
             'total_productos': total_productos,
@@ -623,20 +646,20 @@ def panel_control_minimal(request):
         # Fecha actual y mes
         hoy = timezone.now().date()
         inicio_mes = hoy.replace(day=1)
-        
+
         # Ventas del mes
         ventas_mes = Venta.objects.filter(fecha__date__gte=inicio_mes)
         resumen_ventas_mes = ventas_mes.aggregate(total=Sum('total'), count=Count('id'))
         ventas_recientes = Venta.objects.prefetch_related('detalles__producto').order_by('-fecha')[:5]
-        
+
         # Valor del inventario
         valor_inventario = MateriaPrima.objects.aggregate(
             total=Sum(F('stock_actual') * F('costo_unitario'))
         )['total'] or 0
-        
+
         # Alertas de stock
         alertas_stock = productos_bajo_stock_count + productos_sin_stock.count()
-        
+
         context = {
             'total_productos': total_productos,
             'productos_bajo_stock': productos_bajo_stock_count,
@@ -656,16 +679,16 @@ def panel_control_minimal(request):
 def dashboard_inteligente(request):
     """🧠 Dashboard con Inteligencia de Negocio - LINO V3 - Service Layer Architecture."""
     try:
-        from gestion.services import DashboardService, AlertasService, MarketingService
-        
+        from gestion.services import AlertasService, DashboardService, MarketingService
+
         # � INICIALIZAR SERVICIOS
         dashboard_service = DashboardService()
         alertas_service = AlertasService()
         marketing_service = MarketingService()
-        
+
         # 📊 OBTENER DATOS DEL DASHBOARD (1 llamada centralizada)
         dashboard_data = dashboard_service.get_dashboard_completo()
-        
+
         # 🔔 OBTENER CONTADOR DE ALERTAS (sin generar nuevas)
         # NOTA: Las alertas se generan manualmente via management command o panel admin
         # No se generan automáticamente para evitar duplicados en cada carga de página
@@ -678,26 +701,26 @@ def dashboard_inteligente(request):
             ).count()
         else:
             alertas_no_leidas = 0
-        
+
         # 📈 MARKETING INTELLIGENCE
         productos_trending = marketing_service.get_productos_trending(limit=3)
         productos_hero = marketing_service.get_hero_products(limit=3)
-        
+
         # 📊 DATOS PARA GRÁFICOS AVANZADOS
         # Obtener período desde request (por defecto 7 días)
         periodo_dias = int(request.GET.get('periodo', 7))
         comparar_periodo = request.GET.get('comparar', 'false') == 'true'
-        
+
         ventas_grafico = dashboard_service.get_ventas_por_periodo(
             dias=periodo_dias,
             comparar=comparar_periodo
         )
-        
+
         top_productos_grafico = dashboard_service.get_top_productos_grafico(
             dias=30,
             limit=5
         )
-        
+
         # Serializar datos de gráficos a JSON para JavaScript
         import json
         ventas_grafico_json = {
@@ -709,23 +732,23 @@ def dashboard_inteligente(request):
         if 'datos_anterior' in ventas_grafico:
             ventas_grafico_json['datos_anterior'] = ventas_grafico['datos_anterior']
             ventas_grafico_json['variacion'] = float(ventas_grafico['variacion'])
-        
+
         top_productos_json = {
             'labels': top_productos_grafico['labels'],
             'ingresos': top_productos_grafico['ingresos']
         }
-        
+
         # Preparar datos para gráficos (convertir listas a strings CSV)
         kpis = dashboard_data['kpis']
         ventas_sparkline = ','.join(map(str, kpis['ventas_mes']['sparkline']))
-        
+
         # Sparklines para nuevos KPIs (compras y ganancia no tienen sparkline aún)
         compras_sparkline = ','.join(map(str, kpis.get('compras_mes', {}).get('sparkline', [0]*7)))
-        
+
         # DEPRECATED: productos e inventario - mantener temporalmente para compatibilidad
         productos_sparkline = ','.join(map(str, kpis.get('productos', {}).get('sparkline', [0]*7)))
         inventario_sparkline = ','.join(map(str, kpis.get('inventario', {}).get('sparkline', [0]*7)))
-        
+
         # 🎯 CONTEXTO OPTIMIZADO - Todo desde servicios, cero mock data
         context = {
             # KPIs principales con datos reales
@@ -733,44 +756,44 @@ def dashboard_inteligente(request):
             'resumen_hoy': dashboard_data['resumen_hoy'],
             'actividad_reciente': dashboard_data['actividad_reciente'],
             'top_productos': dashboard_data['top_productos'],
-            
+
             # Alertas
             'alertas_criticas': alertas_no_leidas,
-            
+
             # Marketing intelligence
             'productos_trending': productos_trending,
             'productos_hero': productos_hero,
-            
+
             # Gráficos avanzados (originales para métricas)
             'ventas_grafico': ventas_grafico,
             'top_productos_grafico': top_productos_grafico,
-            
+
             # Gráficos en JSON para JavaScript
             'ventas_grafico_json': json.dumps(ventas_grafico_json),
             'top_productos_json': json.dumps(top_productos_json),
-            
+
             'periodo_actual': periodo_dias,
             'comparar_activo': comparar_periodo,
-            
+
             # Datos para sparklines (formato CSV para Chart.js)
             'ventas_sparkline': ventas_sparkline,
             'compras_sparkline': compras_sparkline,
-            
+
             # Compatibilidad con template existente
             'ventas_semana': ventas_sparkline,  # Alias
             'total_productos': kpis.get('productos', {}).get('total', 0),  # DEPRECATED - mantener para compatibilidad
             'total_ventas_mes': kpis.get('ventas_mes', {}).get('total', 0),
         }
-        
+
         return render(request, 'gestion/dashboard_inteligente.html', context)
-        
+
     except Exception as e:
         import traceback
         messages.error(request, f'Error al cargar dashboard inteligente: {str(e)}')
         # Log del error completo para debugging
         print(f"❌ Error en dashboard_inteligente: {str(e)}")
         print(traceback.format_exc())
-        
+
         # Contexto de emergencia con valores seguros
         return render(request, 'gestion/dashboard_inteligente.html', {
             'error': True,
@@ -830,25 +853,25 @@ def verificar_alertas_stock(request):
 def lista_productos(request):
     """Vista mejorada de lista de productos con filtros y KPIs LINO V3."""
     from gestion.utils.kpi_builder import prepare_product_kpis
-    
+
     productos = Producto.objects.all()
-    
+
     # Filtros
     query = request.GET.get('q', '').strip()
     categoria_seleccionada = request.GET.get('categoria', '')
     estado_stock = request.GET.get('estado_stock', '')
-    
+
     # Aplicar filtros
     if query:
         productos = productos.filter(
-            Q(nombre__icontains=query) | 
+            Q(nombre__icontains=query) |
             Q(descripcion__icontains=query) |
             Q(marca__icontains=query)
         )
-    
+
     if categoria_seleccionada:
         productos = productos.filter(categoria=categoria_seleccionada)
-    
+
     if estado_stock:
         if estado_stock == 'agotado':
             productos = productos.filter(stock=0)
@@ -858,18 +881,18 @@ def lista_productos(request):
             productos = productos.filter(stock__gt=F('stock_minimo'), stock__lte=F('stock_minimo') * 2)
         elif estado_stock == 'normal':
             productos = productos.filter(stock__gt=F('stock_minimo') * 2)
-    
+
     # Paginación
     paginator = Paginator(productos.order_by('nombre'), 25)
     page_number = request.GET.get('page', 1)
     productos_paginados = paginator.get_page(page_number)
-    
+
     # Preparar KPIs usando utility
     kpis = prepare_product_kpis(Producto.objects.all())
-    
+
     # Obtener categorías disponibles para el filtro
     categorias = [choice[0] for choice in Producto.CATEGORIAS_DIETETICA]
-    
+
     context = {
         'productos': productos_paginados,
         'kpis': kpis,
@@ -883,7 +906,7 @@ def lista_productos(request):
         'create_url': reverse('gestion:crear_producto'),
         'export_url': reverse('gestion:exportar_productos'),
     }
-    
+
     return render(request, 'modules/productos/lista.html', context)
 
 @login_required
@@ -892,7 +915,7 @@ def crear_producto(request):
     if not request.user.has_perm('gestion.add_producto'):
         messages.error(request, 'No tienes permiso para crear productos.')
         return redirect('gestion:lista_productos')
-    
+
     if request.method == 'POST':
         form = ProductoForm(request.POST)
         if form.is_valid():
@@ -903,13 +926,13 @@ def crear_producto(request):
                     if nueva_categoria and form.cleaned_data.get('categoria') != 'nueva':
                         # La nueva categoría ya fue procesada en el clean() del formulario
                         pass
-                    
+
                     # Guardar el producto primero (sin stock inicial)
                     producto = form.save(commit=False)
                     stock_inicial = form.cleaned_data.get('stock', 0)
                     producto.stock = 0  # Inicializar en 0 temporalmente
                     producto.save()
-                    
+
                     # Ahora que el producto tiene ID, podemos trabajar con las relaciones
                     # Si el producto usa receta, verificar materias primas y producir
                     if stock_inicial and stock_inicial > 0:
@@ -922,7 +945,7 @@ def crear_producto(request):
                                 # Eliminar el producto recién creado
                                 producto.delete()
                                 raise Exception("Stock de materias primas insuficiente")
-                            
+
                             # Descontar materias primas y actualizar stock
                             producto.descontar_materias_primas(stock_inicial, request.user)
                             producto.stock = stock_inicial
@@ -931,31 +954,31 @@ def crear_producto(request):
                             # Para productos que no usan receta, simplemente establecer el stock
                             producto.stock = stock_inicial
                             producto.save()
-                    
+
                     # Calcular y actualizar costos después de crear el producto
                     if producto.tipo_producto in ['receta', 'fraccionamiento']:
                         # Calcular costo base automáticamente
                         costo_calculado = producto.calcular_costo_unitario()
                         if costo_calculado > 0:
                             producto.costo_base = costo_calculado
-                            
+
                             # Calcular precio sugerido si hay margen
                             if producto.margen_ganancia and producto.margen_ganancia > 0:
                                 margen_decimal = Decimal(str(producto.margen_ganancia))
                                 precio_calculado = costo_calculado * (Decimal('1') + margen_decimal / Decimal('100'))
                                 producto.precio_venta_calculado = precio_calculado
-                            
+
                             # El método save() del modelo se encargará de la sincronización de precios
                             producto.save()
-                    
+
                     # Mensaje de éxito personalizado
                     if nueva_categoria:
                         messages.success(request, f'Producto creado exitosamente con la nueva categoría "{nueva_categoria}".')
                     else:
                         messages.success(request, 'Producto creado exitosamente.')
-                    
+
                     return redirect('gestion:lista_productos')
-                    
+
             except Exception as e:
                 messages.error(request, f'Error al crear el producto: {str(e)}')
                 return render(request, 'modules/productos/form.html', {'form': form, 'title': 'Crear Producto', 'producto': None})
@@ -971,14 +994,14 @@ def crear_producto(request):
             return render(request, 'modules/productos/form.html', {'form': form, 'title': 'Crear Producto', 'producto': None})
     else:
         form = ProductoForm()
-    
+
     return render(request, 'modules/productos/form.html', {'form': form, 'title': 'Crear Producto', 'producto': None})
 
 @login_required
 def detalle_producto(request, pk):
     """Vista de detalle de producto con información completa"""
     producto = get_object_or_404(Producto, pk=pk)
-    
+
     # Calcular estadísticas básicas (solo ventas activas)
     ventas_mes = VentaDetalle.objects.filter(
         producto=producto,
@@ -989,20 +1012,20 @@ def detalle_producto(request, pk):
         total_vendido=models.Sum('cantidad'),
         total_ventas=models.Count('venta', distinct=True)
     )
-    
+
     # Obtener últimas ventas del producto (solo activas)
     ultimas_ventas = VentaDetalle.objects.filter(
         producto=producto,
         venta__eliminada=False  # ✅ Excluir ventas eliminadas
     ).select_related('venta').order_by('-venta__fecha')[:5]
-    
+
     context = {
         'producto': producto,
         'ventas_mes': ventas_mes['total_ventas'] or 0,
         'cantidad_vendida_mes': ventas_mes['total_vendido'] or 0,
         'ultimas_ventas': ultimas_ventas,
     }
-    
+
     return render(request, 'modules/productos/detalle.html', context)
 
 @login_required
@@ -1020,10 +1043,10 @@ def editar_producto(request, pk):
                 with transaction.atomic():
                     # Guardar stock anterior para comparar
                     stock_anterior = producto.stock
-                    
+
                     # Guardar el producto
                     producto = form.save(commit=False)
-                    
+
                     # Solo procesar producción si hay cantidad_a_producir explícita
                     # (campo separado del stock, para producir desde materias primas)
                     cantidad_a_producir = form.cleaned_data.get('cantidad_a_producir', 0)
@@ -1037,11 +1060,11 @@ def editar_producto(request, pk):
                         producto.descontar_materias_primas(cantidad_a_producir, request.user)
                         producto.stock += cantidad_a_producir
                         messages.info(request, f'✅ Producidas {cantidad_a_producir} unidades desde materias primas')
-                    
+
                     # Si solo se cambió el stock manualmente (sin producir)
                     # simplemente guardar el nuevo valor sin descontar nada
                     producto.save()
-                    
+
                     messages.success(request, f'Producto "{producto.nombre}" actualizado exitosamente.')
                 return redirect('gestion:lista_productos')
             except Exception as e:
@@ -1053,7 +1076,7 @@ def editar_producto(request, pk):
             messages.error(request, 'Error al actualizar el producto. Verifica los datos ingresados.')
     else:
         form = ProductoForm(instance=producto)
-    
+
     return render(request, 'modules/productos/form.html', {
         'form': form,
         'title': 'Editar Producto',
@@ -1063,48 +1086,48 @@ def editar_producto(request, pk):
 @login_required
 def eliminar_producto(request, pk):
     producto = get_object_or_404(Producto, pk=pk)
-    
+
     # Verificar permisos
     if not request.user.has_perm('gestion.delete_producto'):
         messages.error(request, 'No tienes permiso para eliminar productos.')
         return redirect('gestion:lista_productos')
-    
+
     if request.method == 'POST':
         try:
             nombre_producto = producto.nombre
             categoria_producto = producto.get_categoria_display()
             stock_producto = producto.stock
-            
+
             with transaction.atomic():
                 # Verificar si el producto tiene ventas asociadas
                 ventas_asociadas = producto.ventadetalle_set.count()
                 if ventas_asociadas > 0:
                     messages.warning(
-                        request, 
+                        request,
                         f'El producto "{nombre_producto}" tiene {ventas_asociadas} venta(s) asociada(s). '
                         'Se eliminará el producto pero se mantendrá el historial de ventas.'
                     )
-                
+
                 # Eliminar el producto
                 producto.delete()
-                
+
                 # Mensaje de éxito con información detallada
                 messages.success(
-                    request, 
+                    request,
                     f'Producto "{nombre_producto}" (Categoría: {categoria_producto}, Stock: {stock_producto}) '
                     'eliminado exitosamente.'
                 )
-                
+
             return redirect('gestion:lista_productos')
-            
+
         except Exception as e:
             messages.error(request, f'Error inesperado al eliminar el producto: {str(e)}')
             return redirect('gestion:lista_productos')
-    
+
     # Obtener información adicional para mostrar en el template
     ventas_count = producto.ventadetalle_set.count()
     ventas_total = sum(vd.subtotal for vd in producto.ventadetalle_set.all())
-    
+
     context = {
         'producto': producto,
         'objeto': producto,
@@ -1115,50 +1138,51 @@ def eliminar_producto(request, pk):
         'categoria_display': producto.get_categoria_display(),
         'estado_stock': producto.get_estado_stock(),
     }
-    
+
     return render(request, 'modules/productos/confirmar_eliminacion_producto.html', context)
 
 @login_required
 @login_required
 def lista_ventas(request):
     """Vista de lista de ventas con KPIs LINO V3"""
-    from gestion.utils.kpi_builder import prepare_ventas_kpis
     from django.core.paginator import Paginator
-    
+
+    from gestion.utils.kpi_builder import prepare_ventas_kpis
+
     ventas = Venta.objects.filter(eliminada=False)  # Solo ventas activas
-    
+
     # Filtros
     query = request.GET.get('q')
     fecha_inicio = request.GET.get('fecha_inicio')
     fecha_fin = request.GET.get('fecha_fin')
-    
+
     if query:
         ventas = ventas.filter(
             Q(cliente__icontains=query) |
             Q(detalles__producto__nombre__icontains=query)
         ).distinct()
-    
+
     if fecha_inicio:
         ventas = ventas.filter(fecha__date__gte=fecha_inicio)
-    
+
     if fecha_fin:
         ventas = ventas.filter(fecha__date__lte=fecha_fin)
-    
+
     # Ventas del mes para KPIs
     ventas_mes = Venta.objects.filter(
         eliminada=False,
         fecha__month=timezone.now().month,
         fecha__year=timezone.now().year
     )
-    
+
     # Preparar KPIs
     kpis = prepare_ventas_kpis(ventas_mes)
-    
+
     # Paginación
     paginator = Paginator(ventas.order_by('-fecha'), 25)
     page_number = request.GET.get('page', 1)
     ventas_paginadas = paginator.get_page(page_number)
-    
+
     # Clientes activos (únicos)
     clientes_activos = ventas.exclude(cliente__isnull=True).exclude(cliente__exact='').values('cliente').distinct().count()
 
@@ -1190,27 +1214,27 @@ def crear_venta(request):
     """
     # Obtener información de la request para logging
     request_info = get_request_info(request)
-    
+
     # Log del intento de acceso
     LinoLogger.log_accion_admin(request.user, "INTENTO_CREAR_VENTA", "Venta", 0)
-    
+
     # Verificar permisos
     if not request.user.has_perm('gestion.add_venta'):
         LinoLogger.log_error_critico(
-            "ventas", "crear_venta", 
-            f"Usuario {request.user.username} sin permisos", 
+            "ventas", "crear_venta",
+            f"Usuario {request.user.username} sin permisos",
             request_info
         )
         messages.error(request, 'No tienes permiso para registrar ventas.')
         return redirect('gestion:lista_ventas')
-    
+
     if request.method == 'POST':
         form = VentaForm(request.POST)
         formset = VentaDetalleFormSet(request.POST, prefix='form')
-        
+
         # Log del intento de procesamiento
         LinoLogger.business_logger.info(f"PROCESANDO VENTA - Usuario: {request.user.username}")
-        
+
         if form.is_valid() and formset.is_valid():
             try:
                 with transaction.atomic():
@@ -1218,40 +1242,40 @@ def crear_venta(request):
                     venta = form.save(commit=False)
                     venta.usuario = request.user  # Asignar usuario que crea la venta
                     venta.save()
-                    
+
                     total = Decimal('0.00')
                     errores_stock = []
                     productos_vendidos = []
-                    
+
                     # Procesar detalles de la venta
                     detalles = formset.save(commit=False)
-                    
+
                     # VALIDACIÓN CRÍTICA: Verificar stock ANTES de procesar
                     for detalle in detalles:
                         producto = detalle.producto
                         if not producto:
-                            LinoLogger.log_venta_error("PRODUCTO_NULO", detalle.cantidad, 
+                            LinoLogger.log_venta_error("PRODUCTO_NULO", detalle.cantidad,
                                                      "Detalle sin producto asociado", request.user)
                             errores_stock.append("Producto no válido")
                             continue
-                            
+
                         if detalle.cantidad <= 0:
-                            LinoLogger.log_venta_error(producto.nombre, detalle.cantidad, 
+                            LinoLogger.log_venta_error(producto.nombre, detalle.cantidad,
                                                      "Cantidad inválida (≤0)", request.user)
                             errores_stock.append(f"{producto.nombre}: cantidad inválida")
                             continue
-                            
+
                         if producto.stock < detalle.cantidad:
-                            LinoLogger.log_venta_error(producto.nombre, detalle.cantidad, 
-                                                     f"Stock insuficiente. Disponible: {producto.stock}", 
+                            LinoLogger.log_venta_error(producto.nombre, detalle.cantidad,
+                                                     f"Stock insuficiente. Disponible: {producto.stock}",
                                                      request.user)
                             errores_stock.append(f"{producto.nombre} (disponible: {producto.stock})")
                             continue
-                    
+
                     # Si hay errores de stock, abortar la transacción
                     if errores_stock:
-                        LinoLogger.log_venta_error("MULTIPLE_PRODUCTOS", len(detalles), 
-                                                 f"Errores de stock: {', '.join(errores_stock)}", 
+                        LinoLogger.log_venta_error("MULTIPLE_PRODUCTOS", len(detalles),
+                                                 f"Errores de stock: {', '.join(errores_stock)}",
                                                  request.user)
                         messages.error(request, 'No hay suficiente stock para: ' + ", ".join(errores_stock))
                         transaction.set_rollback(True)
@@ -1260,67 +1284,67 @@ def crear_venta(request):
                             'formset': formset,
                             'titulo': 'Registrar Venta'
                         })
-                    
+
                     # Procesar cada detalle exitosamente
                     for detalle in detalles:
                         producto = detalle.producto
                         stock_anterior = producto.stock
-                        
+
                         # Actualizar stock
                         producto.stock -= detalle.cantidad
-                        
+
                         # Detectar stock crítico ANTES de guardar
                         if producto.stock <= producto.stock_minimo:
                             if producto.stock == 0:
                                 LinoLogger.log_stock_agotado(producto.nombre)
                             else:
                                 LinoLogger.log_stock_critico(producto.nombre, producto.stock, producto.stock_minimo)
-                        
+
                         producto.save()
-                        
+
                         # Log del cambio de stock
                         LinoLogger.log_stock_actualizado(
-                            producto.nombre, stock_anterior, producto.stock, 
+                            producto.nombre, stock_anterior, producto.stock,
                             f"Venta ID: {venta.id}", request.user
                         )
-                        
+
                         # Configurar detalle
                         detalle.venta = venta
                         if not detalle.precio_unitario:
                             detalle.precio_unitario = producto.precio
                         if not detalle.subtotal or detalle.subtotal == 0:
                             detalle.subtotal = detalle.cantidad * detalle.precio_unitario
-                        
+
                         detalle.save()
                         total += detalle.subtotal
-                        
+
                         productos_vendidos.append({
                             'nombre': producto.nombre,
                             'cantidad': detalle.cantidad,
                             'subtotal': detalle.subtotal
                         })
-                    
+
                     # Actualizar total de la venta
                     venta.total = total
                     venta.save()
-                    
+
                     # LOG EXITOSO de venta creada
                     productos_str = ', '.join([f"{p['nombre']} x{p['cantidad']}" for p in productos_vendidos])
                     LinoLogger.log_venta_creada(venta.id, productos_str, len(detalles), total, request.user)
-                    
+
                     messages.success(request, f'✅ Venta #{venta.id} registrada exitosamente. Total: ${total}. Stock actualizado.')
                     return redirect('gestion:lista_ventas')
-                    
+
             except Exception as e:
                 # Log detallado del error
                 error_trace = traceback.format_exc()
                 LinoLogger.log_error_critico(
-                    "ventas", "crear_venta", 
-                    f"Excepción no controlada: {str(e)}", 
+                    "ventas", "crear_venta",
+                    f"Excepción no controlada: {str(e)}",
                     {"traceback": error_trace, "request_info": request_info}
                 )
                 messages.error(request, f'❌ Error crítico al registrar la venta. Contacte al administrador. Error: {str(e)}')
-                
+
         else:
             # Log de errores de validación
             form_errors = form.errors.as_json() if form.errors else "Sin errores"
@@ -1328,9 +1352,9 @@ def crear_venta(request):
             for form_error in formset.errors:
                 if form_error:
                     formset_errors.append(str(form_error))
-            
-            LinoLogger.log_venta_error("FORMULARIO_INVALIDO", 0, 
-                                     f"Form errors: {form_errors}, Formset errors: {formset_errors}", 
+
+            LinoLogger.log_venta_error("FORMULARIO_INVALIDO", 0,
+                                     f"Form errors: {form_errors}, Formset errors: {formset_errors}",
                                      request.user)
             messages.error(request, 'Formulario inválido. Verifica todos los campos.')
     else:
@@ -1338,7 +1362,7 @@ def crear_venta(request):
         form = VentaForm()
         formset = VentaDetalleFormSet(prefix='form')
         LinoLogger.business_logger.info(f"FORMULARIO_VENTA_CARGADO - Usuario: {request.user.username}")
-    
+
     return render(request, 'modules/ventas/ventas/formulario.html', {
         'form': form,
         'formset': formset,
@@ -1346,24 +1370,24 @@ def crear_venta(request):
     })
 
 @login_required
-@login_required 
+@login_required
 def eliminar_venta(request, pk):
     """🔒 ELIMINACIÓN SEGURA CON SOFT DELETE - ARQUITECTURA DB PROFESIONAL"""
     venta = get_object_or_404(Venta, pk=pk, eliminada=False)  # Solo ventas activas
-    
+
     if not request.user.has_perm('gestion.delete_venta'):
         messages.error(request, 'No tienes permiso para eliminar ventas.')
         return redirect('gestion:lista_ventas')
-    
+
     if request.method == 'POST':
         razon = request.POST.get('razon_eliminacion', '')
-        
+
         try:
             with transaction.atomic():
                 # Guardar información para el mensaje
                 monto_venta = venta.total
                 productos_restaurados = []
-                
+
                 # Restaurar stock de productos
                 detalles = venta.detalles.all()
                 for detalle in detalles:
@@ -1371,24 +1395,24 @@ def eliminar_venta(request, pk):
                     producto.stock += detalle.cantidad
                     producto.save()
                     productos_restaurados.append(f"{detalle.producto.nombre} (+{detalle.cantidad})")
-                
+
                 # 🚀 SOFT DELETE - No eliminar, solo marcar
                 venta.eliminar_venta(request.user, razon)
-                
+
                 # Mensaje detallado del impacto
-                mensaje = f'Venta marcada como eliminada exitosamente. '
-                mensaje += f'Se mantiene el historial para auditoría. '
+                mensaje = 'Venta marcada como eliminada exitosamente. '
+                mensaje += 'Se mantiene el historial para auditoría. '
                 mensaje += f'Stock restaurado: {", ".join(productos_restaurados)}.'
-                
+
                 messages.success(request, mensaje)
-                
+
                 # Auditoría: registrar acción
                 # LogVenta.objects.create(usuario=request.user, accion='eliminar', venta_id=pk, monto=monto_venta)
-                
+
             return redirect('gestion:lista_ventas')
         except Exception as e:
             messages.error(request, f'Error inesperado al eliminar la venta: {str(e)}')
-    
+
     # Calcular impacto antes de eliminar (para mostrar en confirmación)
     productos_afectados = []
     for detalle in venta.detalles.all():
@@ -1398,7 +1422,7 @@ def eliminar_venta(request, pk):
             'stock_actual': detalle.producto.stock,
             'stock_futuro': detalle.producto.stock + detalle.cantidad
         })
-    
+
     context = {
         'venta': venta,
         'objeto': venta,
@@ -1473,17 +1497,17 @@ def lista_materias_primas(request):
     query = request.GET.get('q')
     proveedor = request.GET.get('proveedor')
     estado_stock = request.GET.get('estado_stock')
-    
+
     if query:
         materias_primas = materias_primas.filter(
-            Q(nombre__icontains=query) | 
+            Q(nombre__icontains=query) |
             Q(descripcion__icontains=query) |
             Q(proveedor__icontains=query)
         )
-    
+
     if proveedor:
         materias_primas = materias_primas.filter(proveedor__icontains=proveedor)
-    
+
     if estado_stock:
         if estado_stock == 'agotado':
             materias_primas = materias_primas.filter(stock_actual=0)
@@ -1491,28 +1515,28 @@ def lista_materias_primas(request):
             materias_primas = materias_primas.filter(stock_actual__gt=0, stock_actual__lte=F('stock_minimo'))
         elif estado_stock == 'normal':
             materias_primas = materias_primas.filter(stock_actual__gt=F('stock_minimo'))
-    
+
     # Estadísticas para KPIs
     total_materias = MateriaPrima.objects.filter(activo=True).count()
     con_stock = MateriaPrima.objects.filter(activo=True, stock_actual__gt=0).count()
     stock_bajo = MateriaPrima.objects.filter(
-        activo=True, 
-        stock_actual__gt=0, 
+        activo=True,
+        stock_actual__gt=0,
         stock_actual__lte=F('stock_minimo')
     ).count()
     valor_total = MateriaPrima.objects.filter(activo=True).aggregate(
         total=Sum(F('stock_actual') * F('costo_unitario'))
     )['total'] or 0
-    
+
     stats = {
         'con_stock': con_stock,
         'stock_bajo': stock_bajo,
         'valor_total': valor_total
     }
-    
+
     # Obtener proveedores únicos para el filtro
     proveedores = MateriaPrima.objects.filter(activo=True).values_list('proveedor', flat=True).distinct().exclude(proveedor__isnull=True).exclude(proveedor='')
-    
+
     context = {
         'materias_primas': materias_primas,
         'proveedores': proveedores,
@@ -1521,7 +1545,7 @@ def lista_materias_primas(request):
         'proveedor_seleccionado': proveedor or '',
         'estado_stock_seleccionado': estado_stock or '',
     }
-    
+
     return render(request, 'gestion/materias_primas/lista_simple.html', context)
 
 @login_required
@@ -1529,13 +1553,13 @@ def lista_inventario(request):
     """Vista de inventario optimizada - usa InventarioService para KPIs inteligentes"""
     try:
         from gestion.services.inventario_service import InventarioService
-        
+
         # Inicializar servicio de inventario
         service = InventarioService()
-        
+
         # Obtener KPIs inteligentes del servicio
         kpis = service.get_kpis_inventario()
-        
+
         # Reutilizar lógica existente con paginación
         materias_primas = MateriaPrima.objects.filter(activo=True).order_by('nombre')
         query = request.GET.get('q', '')
@@ -1558,7 +1582,7 @@ def lista_inventario(request):
                 materias_primas = materias_primas.filter(stock_actual=0)
             elif estado_stock == 'bajo':
                 materias_primas = materias_primas.filter(
-                    stock_actual__gt=0, 
+                    stock_actual__gt=0,
                     stock_actual__lte=F('stock_minimo')
                 )
             elif estado_stock == 'normal':
@@ -1595,7 +1619,7 @@ def lista_inventario(request):
         }
 
         return render(request, 'modules/inventario/lista_inventario.html', context)
-        
+
     except Exception as e:
         messages.error(request, f'Error al cargar inventario: {str(e)}')
         return redirect('gestion:panel_control')
@@ -1804,7 +1828,7 @@ def crear_venta_con_materias(request):
                     # if caja:
                     #     caja.saldo += venta.total
                     #     caja.save()
-                messages.success(request, f'Venta registrada exitosamente. Stock actualizado.')
+                messages.success(request, 'Venta registrada exitosamente. Stock actualizado.')
                 return redirect('gestion:lista_ventas')
             except Exception as e:
                 messages.error(request, f'Error inesperado al registrar la venta: {str(e)}')
@@ -1834,7 +1858,7 @@ def reporte_stock_materias_primas(request):
             stock_actual__lte=models.F('stock_minimo') * 2
         )
         stock_normal = materias_primas.exclude(
-            id__in=list(stock_critico.values_list('id', flat=True)) + 
+            id__in=list(stock_critico.values_list('id', flat=True)) +
                    list(stock_bajo.values_list('id', flat=True))
         )
         # Cálculo de valores totales y críticos
@@ -1896,14 +1920,15 @@ def exportar_materias_primas_excel(request):
         return redirect('gestion:lista_inventario')
     try:
         # Exporta materias primas a Excel con formato y estilos
-        import openpyxl
-        from openpyxl.styles import Font, PatternFill
-        from django.http import HttpResponse
         from datetime import datetime
+
+        import openpyxl
+        from django.http import HttpResponse
+        from openpyxl.styles import Font, PatternFill
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = "Materias Primas"
-        headers = ['Nombre', 'Unidad', 'Stock Actual', 'Stock Mínimo', 'Costo Unitario', 
+        headers = ['Nombre', 'Unidad', 'Stock Actual', 'Stock Mínimo', 'Costo Unitario',
                    'Valor Total', 'Proveedor', 'Estado Stock']
         header_font = Font(bold=True, color="FFFFFF")
         header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
@@ -1951,12 +1976,18 @@ def exportar_reporte_pdf(request, tipo_reporte):
         messages.error(request, 'No tienes permiso para exportar reportes.')
         return redirect('gestion:reportes')
     try:
-        from reportlab.lib.pagesizes import letter, A4
-        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-        from reportlab.lib import colors
-        from reportlab.lib.units import inch
         from io import BytesIO
+
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+        from reportlab.platypus import (
+            Paragraph,
+            SimpleDocTemplate,
+            Spacer,
+            Table,
+            TableStyle,
+        )
         buffer = BytesIO()
         doc = SimpleDocTemplate(buffer, pagesize=A4)
         elements = []
@@ -2068,25 +2099,26 @@ def api_verificar_stock_producto(request, producto_id):
         return JsonResponse({'success': False, 'error': 'Producto no encontrado'}, status=404)
     except Exception as e:
         return JsonResponse({'success': False, 'error': str(e)}, status=500)
-    
+
 
 
 @login_required
 def lista_compras(request):
     """Vista para listar compras con KPIs LINO V3"""
-    from gestion.utils.kpi_builder import prepare_compras_kpis
     from django.core.paginator import Paginator
-    
+
+    from gestion.utils.kpi_builder import prepare_compras_kpis
+
     try:
         compras = Compra.objects.all().order_by('-fecha_compra')
-        
+
         # Filtros opcionales
         materia_prima_id = request.GET.get('materia_prima')
         proveedor = request.GET.get('proveedor')
         fecha_inicio = request.GET.get('fecha_inicio')
         fecha_fin = request.GET.get('fecha_fin')
         q = request.GET.get('q')
-        
+
         if materia_prima_id:
             compras = compras.filter(materia_prima_id=materia_prima_id)
         if proveedor:
@@ -2100,23 +2132,23 @@ def lista_compras(request):
             compras = compras.filter(fecha_compra__gte=fecha_inicio)
         if fecha_fin:
             compras = compras.filter(fecha_compra__lte=fecha_fin)
-        
+
         # Compras del mes para KPIs
         compras_mes = Compra.objects.filter(
             fecha_compra__month=timezone.now().month,
             fecha_compra__year=timezone.now().year
         )
-        
+
         # Preparar KPIs
         kpis = prepare_compras_kpis(compras_mes)
-        
+
         # Paginación
         paginator = Paginator(compras, 25)
         page_number = request.GET.get('page', 1)
         compras_paginadas = paginator.get_page(page_number)
-        
+
         materias_primas = MateriaPrima.objects.all()
-        
+
         context = {
             'compras': compras_paginadas,
             'kpis': kpis,
@@ -2144,7 +2176,7 @@ def api_costo_receta(request, pk):
     try:
         receta = get_object_or_404(Receta, pk=pk)
         costo_total = receta.costo_total()
-        
+
         # También devolver información detallada de ingredientes para debug
         ingredientes = []
         for ingrediente in receta.recetamateriaprima_set.all():
@@ -2155,7 +2187,7 @@ def api_costo_receta(request, pk):
                 'costo_unitario': float(ingrediente.materia_prima.costo_unitario),
                 'costo_total': float(costo_ingrediente)
             })
-        
+
         return JsonResponse({
             'success': True,
             'costo_total': float(costo_total),
@@ -2192,7 +2224,7 @@ def lista_productos_migrado(request):
             'categoria_seleccionada': request.GET.get('categoria', ''),
             'estado_stock': request.GET.get('estado_stock', ''),
         }
-    
+
     return render(request, 'gestion/lista_productos_migrado.html', context)
 
 @login_required
@@ -2206,49 +2238,49 @@ def crear_producto_migrado(request):
             return redirect('gestion:lista_productos_migrado')
     else:
         form = ProductoForm()
-    
+
     return render(request, 'gestion/crear_producto_migrado.html', {
         'form': form,
         'titulo': 'Crear Producto - Migrado'
     })
 
-@login_required  
+@login_required
 def lista_ventas_migrado(request):
     """Vista temporal para probar el template de ventas migrado."""
     # Obtener todas las ventas
     ventas = Venta.objects.all().order_by('-fecha')
-    
+
     # Aplicar filtros
     query = request.GET.get('q', '')
     fecha_desde = request.GET.get('fecha_desde', '')
     fecha_hasta = request.GET.get('fecha_hasta', '')
-    
+
     if query:
         ventas = ventas.filter(
-            Q(cliente__icontains=query) | 
+            Q(cliente__icontains=query) |
             Q(ventadetalle__producto__nombre__icontains=query)
         ).distinct()
-    
+
     if fecha_desde:
         ventas = ventas.filter(fecha__gte=fecha_desde)
-    
+
     if fecha_hasta:
         ventas = ventas.filter(fecha__lte=fecha_hasta)
-    
+
     # Calcular KPIs
     from django.utils import timezone
     now = timezone.now()
-    
+
     total_ventas = Venta.objects.count()
     ventas_mes = Venta.objects.filter(fecha__month=now.month, fecha__year=now.year).count()
     ventas_hoy = Venta.objects.filter(fecha__date=now.date()).count()
-    
+
     # Calcular ingresos del mes
     ingresos_mes = Venta.objects.filter(
-        fecha__month=now.month, 
+        fecha__month=now.month,
         fecha__year=now.year
     ).aggregate(total=Sum('total'))['total'] or 0
-    
+
     context = {
         'ventas': ventas,
         'query': query,
@@ -2259,7 +2291,7 @@ def lista_ventas_migrado(request):
         'ventas_hoy': ventas_hoy,
         'ingresos_mes': f"${ingresos_mes:,.2f}",
     }
-    
+
     return render(request, 'gestion/lista_ventas_migrado.html', context)
 
 
@@ -2269,14 +2301,14 @@ def crear_venta_migrado(request):
     if request.method == 'POST':
         form = VentaForm(request.POST)
         formset = VentaDetalleFormSet(request.POST)
-        
+
         if form.is_valid() and formset.is_valid():
             try:
                 with transaction.atomic():
                     venta = form.save(commit=False)
                     venta.vendedor = request.user
                     venta.save()
-                    
+
                     total = Decimal('0.00')
                     for form_detail in formset:
                         if form_detail.cleaned_data and not form_detail.cleaned_data.get('DELETE', False):
@@ -2284,10 +2316,10 @@ def crear_venta_migrado(request):
                             detalle.venta = venta
                             detalle.save()
                             total += detalle.subtotal
-                    
+
                     venta.total = total
                     venta.save()
-                    
+
                     messages.success(request, f'Venta registrada exitosamente. Total: ${total}')
                     return redirect('gestion:lista_ventas_migrado')
             except Exception as e:
@@ -2295,16 +2327,16 @@ def crear_venta_migrado(request):
     else:
         form = VentaForm()
         formset = VentaDetalleFormSet()
-    
+
     # Obtener productos disponibles para el JavaScript
     productos = Producto.objects.filter(stock__gt=0).order_by('nombre')
-    
+
     context = {
         'form': form,
         'formset': formset,
         'productos': productos,
     }
-    
+
     return render(request, 'gestion/venta_form_multi_migrado.html', context)
 
 
@@ -2349,10 +2381,10 @@ def dashboard_migrado(request):
         mes_anterior = inicio_mes - timedelta(days=30)
         fin_mes_anterior = inicio_mes - timedelta(days=1)
         ingresos_mes_anterior = Venta.objects.filter(
-            fecha__date__gte=mes_anterior, 
+            fecha__date__gte=mes_anterior,
             fecha__date__lte=fin_mes_anterior
         ).aggregate(total=Sum('total'))['total'] or 0
-        
+
         # Calcular tendencias
         if ingresos_mes_anterior > 0:
             tendencia_ingresos = ((ingresos_mes - ingresos_mes_anterior) / ingresos_mes_anterior) * 100
@@ -2360,14 +2392,14 @@ def dashboard_migrado(request):
             tendencia_ingresos = 100
         else:
             tendencia_ingresos = 0
-        
+
         tendencia_ingresos = max(-999, min(999, tendencia_ingresos))
-        
+
         # Margen de ganancia estimado
         inversion_mes = 0  # Simplificado para el demo
         margen_bruto = ingresos_mes - inversion_mes
         porcentaje_margen = (margen_bruto / max(ingresos_mes, 1)) * 100 if ingresos_mes > 0 else 0
-        
+
         # Alertas críticas
         productos_sin_stock = Producto.objects.filter(stock=0).count()
 
@@ -2411,61 +2443,62 @@ def dashboard_migrado(request):
 def lista_compras_migrado(request):
     """Vista migrada para lista de compras usando componentes LINO"""
     from datetime import datetime, timedelta
-    from django.db.models import Sum, Count, Avg
-    
+
+    from django.db.models import Avg, Sum
+
     # Obtener filtros
     q = request.GET.get('q', '').strip()
     materia_prima_id = request.GET.get('materia_prima', '')
     fecha_desde = request.GET.get('fecha_desde', '')
     fecha_hasta = request.GET.get('fecha_hasta', '')
-    
+
     # Base queryset - usando Compra (el modelo que existe)
     compras = Compra.objects.all().order_by('-fecha_compra')
-    
+
     # Aplicar filtros
     if q:
         compras = compras.filter(
             Q(materia_prima__nombre__icontains=q) |
             Q(proveedor__icontains=q)
         )
-    
+
     if materia_prima_id:
         compras = compras.filter(materia_prima_id=materia_prima_id)
-    
+
     if fecha_desde:
         compras = compras.filter(fecha_compra__gte=fecha_desde)
-    
+
     if fecha_hasta:
         compras = compras.filter(fecha_compra__lte=fecha_hasta)
-    
+
     # Cálculos para KPIs
     total_invertido = compras.aggregate(total=Sum('precio_mayoreo'))['total'] or 0
-    
+
     # Fechas para estadísticas
     today = datetime.now().date()
     week_ago = today - timedelta(days=7)
     month_start = today.replace(day=1)
-    
+
     compras_mes = compras.filter(fecha_compra__gte=month_start).count()
     compras_hoy = compras.filter(fecha_compra=today).count()
     compras_semana = compras.filter(fecha_compra__gte=week_ago).count()
-    
+
     # Proveedores activos (con compras en el último mes)
     proveedores_activos = compras.filter(
         fecha_compra__gte=month_start
     ).values('proveedor').distinct().count()
-    
+
     # Inversión del mes
     inversion_mes = compras.filter(
         fecha_compra__gte=month_start
     ).aggregate(total=Sum('precio_mayoreo'))['total'] or 0
-    
+
     # Promedio de compra
     promedio_compra = compras.aggregate(promedio=Avg('precio_mayoreo'))['promedio'] or 0
-    
+
     # Materias primas para filtro
     materias_primas = MateriaPrima.objects.all().order_by('nombre')
-    
+
     context = {
         'compras': compras,
         'total_invertido': total_invertido,
@@ -2479,7 +2512,7 @@ def lista_compras_migrado(request):
         'today': today,
         'week_ago': week_ago,
     }
-    
+
     return render(request, 'gestion/lista_compras_migrado.html', context)
 
 @login_required
@@ -2499,14 +2532,14 @@ def crear_compra_migrado(request):
             messages.warning(request, '⚠️ Por favor corrige los errores en el formulario')
     else:
         form = CompraForm()
-    
+
     context = {
         'form': form,
     }
-    
+
     return render(request, 'gestion/crear_compra_migrado.html', context)
 
-@login_required  
+@login_required
 def reportes_migrado(request):
     """
     OBSOLETA - Redirige a reportes_lino()
@@ -2548,7 +2581,7 @@ def lista_productos_lino(request):
         productos_stock_critico = productos.filter(stock_actual__lte=F('stock_minimo')).count()
         productos_agotados = productos.filter(stock_actual=0).count()
         valor_inventario = sum((p.precio or 0) * (p.stock_actual or 0) for p in productos)
-        
+
         # Obtener todas las categorías para el filtro
         categorias = Producto.objects.values_list('categoria', flat=True).distinct().exclude(categoria__isnull=True).exclude(categoria='')
 
@@ -2570,7 +2603,7 @@ def lista_productos_lino(request):
         }
 
         return render(request, 'modules/productos/lista_productos_migrado_lino.html', context)
-        
+
     except Exception as e:
         messages.error(request, f'Error al cargar productos: {str(e)}')
         return redirect('gestion:panel_control')
@@ -2579,7 +2612,7 @@ def lista_productos_lino(request):
 # def lista_materias_primas_lino(request):
 #     """Vista obsoleta - usar lista_materias_primas"""
 #     pass
-        
+
         # Obtener proveedores para el filtro
         proveedores = MateriaPrima.objects.values_list('proveedor', flat=True).distinct().exclude(proveedor__isnull=True).exclude(proveedor='')
         total_proveedores = len(set(proveedores))
@@ -2602,7 +2635,7 @@ def lista_productos_lino(request):
         }
 
         return render(request, 'gestion/materias_primas/lista_simple_migrado_lino.html', context)
-        
+
     except Exception as e:
         messages.error(request, f'Error al cargar materias primas: {str(e)}')
         return redirect('gestion:panel_control')
@@ -2632,19 +2665,19 @@ def lista_compras_lino(request):
             compras = compras.filter(fecha__gte=fecha_desde_obj)
 
         # Calcular estadísticas
-        from datetime import datetime, timedelta
+        from datetime import datetime
         hoy = datetime.now().date()
         inicio_mes = hoy.replace(day=1)
-        
+
         total_compras = compras.count()
         compras_mes = compras.filter(fecha__gte=inicio_mes).count()
         total_invertido = sum(compra.total for compra in compras)
         total_mes = sum(compra.total for compra in compras.filter(fecha__gte=inicio_mes))
-        
+
         # Proveedores únicos
         proveedores = set(compra.materia_prima.proveedor for compra in compras if compra.materia_prima.proveedor)
         proveedores_activos = len(proveedores)
-        
+
         # Top proveedores (simplificado)
         proveedores_list = list(proveedores)[:5]  # Top 5
         top_proveedores = []
@@ -2680,7 +2713,7 @@ def lista_compras_lino(request):
         }
 
         return render(request, 'gestion/compras/lista_migrado_lino.html', context)
-        
+
     except Exception as e:
         messages.error(request, f'Error al cargar compras: {str(e)}')
         return redirect('gestion:panel_control')
@@ -2690,15 +2723,15 @@ def reportes_lino(request):
     """Vista migrada de reportes usando el sistema de diseño Lino"""
     try:
         from datetime import datetime, timedelta
-        from django.db.models import Sum, Count, Avg
         from decimal import Decimal
-        
+
+
         hoy = datetime.now().date()
-        
+
         # Obtener rango de fechas desde request o usar mes actual por defecto
         fecha_desde_str = request.GET.get('fecha_desde', '')
         fecha_hasta_str = request.GET.get('fecha_hasta', '')
-        
+
         if fecha_desde_str and fecha_hasta_str:
             fecha_desde = datetime.strptime(fecha_desde_str, '%Y-%m-%d').date()
             fecha_hasta = datetime.strptime(fecha_hasta_str, '%Y-%m-%d').date()
@@ -2706,24 +2739,24 @@ def reportes_lino(request):
             # Por defecto: mes actual
             fecha_desde = hoy.replace(day=1)
             fecha_hasta = hoy
-        
+
         # Calcular mes anterior para comparación
         dias_periodo = (fecha_hasta - fecha_desde).days
         fecha_desde_anterior = fecha_desde - timedelta(days=dias_periodo + 1)
         fecha_hasta_anterior = fecha_desde - timedelta(days=1)
-        
+
         # Cálculos del período actual
         ventas = Venta.objects.filter(fecha__range=[fecha_desde, fecha_hasta])
         compras = Compra.objects.filter(fecha_compra__range=[fecha_desde, fecha_hasta])
-        
+
         # Cálculos del período anterior
         ventas_anterior = Venta.objects.filter(fecha__range=[fecha_desde_anterior, fecha_hasta_anterior])
         compras_anterior = Compra.objects.filter(fecha_compra__range=[fecha_desde_anterior, fecha_hasta_anterior])
-        
+
         # Productos y materias primas (no filtrados por fecha)
         productos = Producto.objects.all()
         materias_primas = MateriaPrima.objects.all()
-        
+
         # === PERÍODO ACTUAL ===
         ingresos_totales = sum(Decimal(str(venta.total)) for venta in ventas)
         # Calcular gastos desde detalles o precio_mayoreo legacy
@@ -2735,10 +2768,10 @@ def reportes_lino(request):
                 # Calcular desde detalles
                 for detalle in compra.detalles.all():
                     gastos_totales += Decimal(str(detalle.precio_unitario)) * Decimal(str(detalle.cantidad))
-        
+
         ganancia_neta = ingresos_totales - gastos_totales
         total_ventas = ventas.count()
-        
+
         # === PERÍODO ANTERIOR ===
         ingresos_anterior = sum(Decimal(str(venta.total)) for venta in ventas_anterior)
         # Calcular gastos desde detalles o precio_mayoreo legacy
@@ -2750,10 +2783,10 @@ def reportes_lino(request):
                 # Calcular desde detalles
                 for detalle in compra.detalles.all():
                     gastos_anterior += Decimal(str(detalle.precio_unitario)) * Decimal(str(detalle.cantidad))
-        
+
         ganancia_anterior = ingresos_anterior - gastos_anterior
         total_ventas_anterior = ventas_anterior.count()
-        
+
         # === CALCULAR VARIACIONES ===
         def calcular_variacion(actual, anterior):
             if anterior > 0:
@@ -2762,28 +2795,28 @@ def reportes_lino(request):
                 return 100.0  # Crecimiento del 100% si no había datos anteriores
             else:
                 return 0.0
-        
+
         variacion_ingresos = calcular_variacion(ingresos_totales, ingresos_anterior)
         variacion_gastos = calcular_variacion(gastos_totales, gastos_anterior)
         variacion_ganancia = calcular_variacion(ganancia_neta, ganancia_anterior)
         variacion_ventas = calcular_variacion(total_ventas, total_ventas_anterior)
-        
+
         # Calcular margen y ROI
         margen_porcentaje = float((ganancia_neta / ingresos_totales) * 100) if ingresos_totales > 0 else 0
         roi = float((ganancia_neta / gastos_totales) * 100) if gastos_totales > 0 else 0
-        
+
         # Métricas adicionales
         ticket_promedio = float(ingresos_totales / total_ventas) if total_ventas > 0 else 0
         ticket_promedio_anterior = float(ingresos_anterior / total_ventas_anterior) if total_ventas_anterior > 0 else 0
         variacion_ticket = calcular_variacion(ticket_promedio, ticket_promedio_anterior)
-        
+
         # Productos y stock
         productos_criticos = productos.filter(stock__lte=F('stock_minimo')).count()
         valor_inventario = sum((Decimal(str(p.precio or 0)) * Decimal(str(p.stock or 0))) for p in productos)
-        
+
         # Proveedores activos
         proveedores_activos = len(set(mp.proveedor for mp in materias_primas if mp.proveedor))
-        
+
         # Alertas
         alertas = []
         if productos_criticos > 0:
@@ -2792,14 +2825,14 @@ def reportes_lino(request):
                 'titulo': 'Stock Crítico',
                 'descripcion': f'{productos_criticos} productos requieren reposición'
             })
-        
+
         if ganancia_neta < 0:
             alertas.append({
                 'tipo': 'danger',
                 'titulo': 'Pérdidas Detectadas',
                 'descripcion': 'La ganancia neta es negativa, revisa los costos'
             })
-        
+
         if variacion_ingresos < -10:
             alertas.append({
                 'tipo': 'warning',
@@ -2811,7 +2844,7 @@ def reportes_lino(request):
             # Filtros
             'fecha_desde': fecha_desde.strftime('%Y-%m-%d'),
             'fecha_hasta': fecha_hasta.strftime('%Y-%m-%d'),
-            
+
             # Período actual
             'ingresos_totales': float(ingresos_totales),
             'gastos_totales': float(gastos_totales),
@@ -2821,20 +2854,20 @@ def reportes_lino(request):
             'total_ventas': total_ventas,
             'total_compras': compras.count(),
             'ticket_promedio': ticket_promedio,
-            
+
             # Variaciones vs período anterior
             'variacion_ingresos': variacion_ingresos,
             'variacion_gastos': variacion_gastos,
             'variacion_ganancia': variacion_ganancia,
             'variacion_ventas': variacion_ventas,
             'variacion_ticket': variacion_ticket,
-            
+
             # Inventario y productos
             'total_productos': productos.count(),
             'productos_criticos': productos_criticos,
             'valor_inventario': float(valor_inventario),
             'proveedores_activos': proveedores_activos,
-            
+
             # Campos legacy (mantener compatibilidad)
             'margen_bruto': margen_porcentaje,
             'inversion_total': float(gastos_totales),
@@ -2846,7 +2879,7 @@ def reportes_lino(request):
         }
 
         return render(request, 'modules/reportes/dashboard_enterprise.html', context)
-        
+
     except Exception as e:
         messages.error(request, f'Error al generar reportes: {str(e)}')
         return redirect('gestion:panel_control')
@@ -2855,8 +2888,8 @@ def reportes_lino(request):
 def lista_ventas_lino(request):
     """Vista migrada de ventas usando el sistema de diseño Lino"""
     try:
-        from datetime import datetime, timedelta
-        
+        from datetime import datetime
+
         ventas = Venta.objects.select_related().prefetch_related('detalles__producto').all().order_by('-fecha')
         query = request.GET.get('q', '')
         fecha_desde = request.GET.get('fecha_desde', '')
@@ -2880,17 +2913,17 @@ def lista_ventas_lino(request):
         # Calcular estadísticas
         hoy = datetime.now().date()
         inicio_mes = hoy.replace(day=1)
-        
+
         total_ventas = ventas.count()
         ventas_mes = ventas.filter(fecha__gte=inicio_mes).count()
         ventas_hoy = ventas.filter(fecha=hoy).count()
-        
+
         ingresos_mes = sum(venta.total for venta in ventas.filter(fecha__gte=inicio_mes))
         ingresos_hoy = sum(venta.total for venta in ventas.filter(fecha=hoy))
-        
+
         # Productos más vendidos (simplificado)
         productos_top = []
-        
+
         # Paginación
         paginator = Paginator(ventas, 20)
         page_number = request.GET.get('page')
@@ -2910,7 +2943,7 @@ def lista_ventas_lino(request):
         }
 
         return render(request, 'gestion/lista_ventas_migrado.html', context)
-        
+
     except Exception as e:
         messages.error(request, f'Error al cargar ventas: {str(e)}')
         return redirect('gestion:dashboard')
@@ -2926,31 +2959,32 @@ def dashboard_rentabilidad(request):
     """
     try:
         from django.core.paginator import Paginator
+
         from gestion.services.rentabilidad_service import RentabilidadService
-        
+
         # Usar el nuevo servicio de rentabilidad
         service = RentabilidadService()
-        
+
         # Obtener KPIs principales
         kpis = service.get_kpis_rentabilidad()
-        
+
         # Obtener análisis detallado de objetivo de margen
         analisis_objetivo = service.get_objetivo_margen_analisis()
-        
+
         # Obtener todos los productos con su rentabilidad para la tabla
         productos_rentabilidad = service.get_productos_rentabilidad()
-        
+
         # 📄 PAGINACIÓN DE LA TABLA (15 productos por página)
         paginator = Paginator(productos_rentabilidad, 15)
         page_number = request.GET.get('page', 1)
         productos_paginados = paginator.get_page(page_number)
-        
+
         # Datos para gráfico de distribución de márgenes
         margenes_labels = [
-            'En Pérdida', 
-            'Crítico (<10%)', 
-            'Bajo (10-20%)', 
-            'Aceptable (20-30%)', 
+            'En Pérdida',
+            'Crítico (<10%)',
+            'Bajo (10-20%)',
+            'Aceptable (20-30%)',
             'Bueno (30-40%)',
             'Muy Bueno (40-60%)',
             'Excelente (60-80%)',
@@ -2968,20 +3002,20 @@ def dashboard_rentabilidad(request):
             len([p for p in productos_rentabilidad if 80 <= p['margen'] < 100]),
             len([p for p in productos_rentabilidad if p['margen'] >= 100])
         ]
-        
+
         # Top 10 productos por margen
         top_margenes = sorted(
-            [p for p in productos_rentabilidad if not p['en_perdida']], 
-            key=lambda x: x['margen'], 
+            [p for p in productos_rentabilidad if not p['en_perdida']],
+            key=lambda x: x['margen'],
             reverse=True
         )[:10]
         top_margenes_labels = [p['nombre'][:20] for p in top_margenes]
         top_margenes_data = [p['margen'] for p in top_margenes]
-        
+
         # ADAPTAR ESTRUCTURA PARA EL TEMPLATE
         # El template espera kpis.objetivo_margen, kpis.rentables.total, etc.
         total_productos = analisis_objetivo['total_productos']
-        
+
         kpis_adaptados = {
             'objetivo_margen': {
                 'meta': analisis_objetivo['meta'],
@@ -3005,15 +3039,15 @@ def dashboard_rentabilidad(request):
                 'ponderado': True,
             },
         }
-        
+
         # Productos críticos (los que no cumplen objetivo)
         productos_criticos = [p for p in productos_rentabilidad if not p['cumple_objetivo'] and not p['en_perdida']]
-        
+
         analisis_adaptado = {
             **analisis_objetivo,
             'productos_criticos': productos_criticos[:10],
         }
-        
+
         context = {
             'kpis': kpis_adaptados,
             'analisis_objetivo': analisis_adaptado,
@@ -3023,9 +3057,9 @@ def dashboard_rentabilidad(request):
             'top_margenes_labels': json.dumps(top_margenes_labels),
             'top_margenes_data': json.dumps(top_margenes_data),
         }
-        
+
         return render(request, 'gestion/dashboard_rentabilidad_v3.html', context)
-        
+
     except Exception as e:
         messages.error(request, f'Error al cargar dashboard de rentabilidad: {str(e)}')
         import traceback
@@ -3043,31 +3077,31 @@ def detalle_rentabilidad_producto(request, producto_id):
     try:
         producto = get_object_or_404(Producto, id=producto_id)
         analytics = AnalyticsRentabilidad()
-        
+
         # Datos específicos del producto
         evolucion = analytics.get_evolucion_costos(producto_id=producto_id)
         productos_rentabilidad = analytics.get_productos_rentabilidad()
-        
+
         # Encontrar los datos del producto específico
         producto_data = next((p for p in productos_rentabilidad if p['producto'].id == producto_id), None)
-        
+
         # Histórico de ventas (últimos 30 días)
         desde = timezone.now().date() - timedelta(days=30)
         ventas_historico = VentaDetalle.objects.filter(
             producto=producto,
             venta__fecha__date__gte=desde
         ).order_by('venta__fecha')
-        
+
         # Preparar datos para gráfico de evolución
         fechas = []
         precios = []
         cantidades = []
-        
+
         for venta in ventas_historico:
             fechas.append(venta.venta.fecha.strftime('%Y-%m-%d'))
             precios.append(float(venta.precio_unitario))
             cantidades.append(venta.cantidad)
-        
+
         context = {
             'producto': producto,
             'producto_data': producto_data,
@@ -3077,9 +3111,9 @@ def detalle_rentabilidad_producto(request, producto_id):
             'precios_json': json.dumps(precios),
             'cantidades_json': json.dumps(cantidades)
         }
-        
+
         return render(request, 'gestion/detalle_rentabilidad_producto.html', context)
-        
+
     except Exception as e:
         messages.error(request, f'Error al cargar detalle de rentabilidad: {str(e)}')
         return redirect('gestion:dashboard_rentabilidad')
@@ -3093,13 +3127,13 @@ def alertas_rentabilidad_ajax(request):
     try:
         analytics = AnalyticsRentabilidad()
         alertas = analytics.get_alertas_rentabilidad()
-        
+
         return JsonResponse({
             'success': True,
             'alertas': alertas,
             'total': len(alertas)
         })
-        
+
     except Exception as e:
         return JsonResponse({
             'success': False,
@@ -3115,7 +3149,7 @@ def recomendaciones_precios_ajax(request):
     try:
         analytics = AnalyticsRentabilidad()
         recomendaciones = analytics.get_recomendaciones_precios()
-        
+
         # Serializar datos para JSON
         recomendaciones_json = []
         for rec in recomendaciones:
@@ -3129,13 +3163,13 @@ def recomendaciones_precios_ajax(request):
                 'incremento_porcentaje': rec['incremento_porcentaje'],
                 'justificacion': rec['justificacion']
             })
-        
+
         return JsonResponse({
             'success': True,
             'recomendaciones': recomendaciones_json,
             'total': len(recomendaciones_json)
         })
-        
+
     except Exception as e:
         return JsonResponse({
             'success': False,
@@ -3154,18 +3188,18 @@ def aplicar_precio_sugerido(request, producto_id):
                 producto = get_object_or_404(Producto, id=producto_id)
                 nuevo_precio = float(request.POST.get('nuevo_precio'))
                 precio_anterior = producto.precio
-                
+
                 # Validar precio
                 if nuevo_precio <= 0:
                     return JsonResponse({
                         'success': False,
                         'error': 'El precio debe ser mayor a 0'
                     })
-                
+
                 # Actualizar precio
                 producto.precio = nuevo_precio
                 producto.save()
-                
+
                 # Log de la operación
                 log_business_operation(
                     user=request.user,
@@ -3173,18 +3207,18 @@ def aplicar_precio_sugerido(request, producto_id):
                     details=f'Producto: {producto.nombre} - Precio anterior: ${precio_anterior} - Precio nuevo: ${nuevo_precio}',
                     related_objects={'producto': producto}
                 )
-                
+
                 return JsonResponse({
                     'success': True,
                     'message': f'Precio actualizado exitosamente. ${precio_anterior} → ${nuevo_precio}'
                 })
-                
+
         except Exception as e:
             return JsonResponse({
                 'success': False,
                 'error': f'Error al actualizar precio: {str(e)}'
             })
-    
+
     return JsonResponse({'success': False, 'error': 'Método no permitido'})
 
 
@@ -3200,36 +3234,36 @@ def crear_venta_v3(request):
                 productos_data = request.POST
                 productos_validados = []
                 index = 0
-                
+
                 # Primera pasada: validar todo
                 while f'productos[{index}][producto_id]' in productos_data:
                     producto_id = productos_data.get(f'productos[{index}][producto_id]')
                     cantidad = Decimal(productos_data.get(f'productos[{index}][cantidad]', '0'))
                     precio = Decimal(productos_data.get(f'productos[{index}][precio_unitario]', '0'))
                     subtotal = Decimal(productos_data.get(f'productos[{index}][subtotal]', '0'))
-                    
+
                     if producto_id and cantidad > 0:
                         producto = Producto.objects.get(id=producto_id)
-                        
+
                         # ✅ Verificar stock ANTES de crear venta
                         if producto.stock < cantidad:
                             messages.error(
-                                request, 
+                                request,
                                 f'❌ Stock insuficiente para {producto.nombre}. '
                                 f'Disponible: {producto.stock}, Solicitado: {cantidad}'
                             )
                             # ⚠️ IMPORTANTE: raise para hacer rollback del transaction
                             raise ValueError(f'Stock insuficiente para {producto.nombre}')
-                        
+
                         productos_validados.append({
                             'producto': producto,
                             'cantidad': cantidad,
                             'precio': precio,
                             'subtotal': subtotal
                         })
-                    
+
                     index += 1
-                
+
                 # ✅ Si llegamos aquí, todo validó correctamente
                 # Segunda pasada: crear la venta y procesar
                 venta = Venta.objects.create(
@@ -3238,7 +3272,7 @@ def crear_venta_v3(request):
                     total=Decimal(request.POST.get('total', '0')),
                     usuario=request.user
                 )
-                
+
                 # Procesar productos validados
                 for item in productos_validados:
                     # Crear detalle
@@ -3249,40 +3283,40 @@ def crear_venta_v3(request):
                         precio_unitario=item['precio'],
                         subtotal=item['subtotal']
                     )
-                    
+
                     # Descuento de stock del producto
                     from django.db.models import F
                     Producto.objects.filter(id=item['producto'].id).update(
                         stock=F('stock') - item['cantidad']
                     )
-                    
+
                     # 🔧 FIX BUG-A (NUEVO): Descontar ingredientes si el producto tiene receta
                     # Ya fue validado arriba, así que sabemos que hay stock
                     if item['producto'].tiene_receta and item['producto'].receta:
                         item['producto'].descontar_materias_primas(item['cantidad'], request.user)
-                
+
                 # Recalcular total de la venta (antes lo hacía el signal)
                 venta.calcular_total()
-                
+
                 messages.success(request, f'✅ Venta #{venta.id} registrada exitosamente')
                 return redirect('gestion:lista_ventas')
-                
-        except ValueError as ve:
+
+        except ValueError:
             # Error de validación (stock insuficiente, etc.)
             return redirect('gestion:crear_venta')
         except Exception as e:
             messages.error(request, f'❌ Error al crear venta: {str(e)}')
             return redirect('gestion:crear_venta')
-    
+
     # GET - Mostrar formulario
     productos = Producto.objects.filter(stock__gt=0).order_by('nombre')
-    
+
     context = {
         'title': 'Nueva Venta',
         'productos': productos,
         'today': timezone.now().date(),
     }
-    
+
     return render(request, 'modules/ventas/form_v3_natural.html', context)
 
 
@@ -3302,32 +3336,32 @@ def crear_compra_v3(request):
                     observaciones=request.POST.get('observaciones', ''),
                     total=Decimal('0.00')  # Se calculará después
                 )
-                
+
                 # 2. Procesar los detalles (materias primas)
                 # El frontend envía: materia_prima_1, cantidad_1, precio_unitario_1, etc.
                 detalle_count = 0
                 i = 1
-                
+
                 while True:
                     # Buscar si existe materia_prima_{i}
                     materia_prima_id = request.POST.get(f'materia_prima_{i}')
-                    
+
                     if not materia_prima_id:
                         break  # No hay más detalles
-                    
+
                     # Obtener datos del detalle
                     cantidad = request.POST.get(f'cantidad_{i}')
                     precio_unitario = request.POST.get(f'precio_unitario_{i}')
-                    
+
                     # Validar que no estén vacíos
                     if not cantidad or not precio_unitario:
                         i += 1
                         continue
-                    
+
                     # Crear el detalle
                     from gestion.models import CompraDetalle
                     materia_prima = MateriaPrima.objects.get(id=materia_prima_id)
-                    
+
                     CompraDetalle.objects.create(
                         compra=compra,
                         materia_prima=materia_prima,
@@ -3340,42 +3374,42 @@ def crear_compra_v3(request):
                     # - Recalcula costo unitario
                     # - Crea lote FIFO
                     # - Actualiza total de compra
-                    
+
                     detalle_count += 1
                     i += 1
-                
+
                 # 3. Validar que haya al menos 1 detalle
                 if detalle_count == 0:
                     raise ValueError("Debe agregar al menos una materia prima a la compra")
-                
+
                 # 4. Recalcular total (por si acaso)
                 compra.calcular_total()
-                
+
                 # 5. Mensaje de éxito
                 messages.success(
-                    request, 
+                    request,
                     f'✅ Compra registrada exitosamente. '
                     f'{detalle_count} materia(s) prima(s) agregadas. '
                     f'Total: ${compra.total}'
                 )
                 return redirect('gestion:lista_compras')
-                
+
         except ValueError as e:
             messages.error(request, f'❌ Error de validación: {str(e)}')
             return redirect('gestion:crear_compra')
         except Exception as e:
             messages.error(request, f'❌ Error al crear compra: {str(e)}')
             return redirect('gestion:crear_compra')
-    
+
     # GET - Mostrar formulario
     materias_primas = MateriaPrima.objects.filter(activo=True).order_by('nombre')
-    
+
     context = {
         'title': 'Nueva Compra',
         'materias_primas': materias_primas,
         'today': timezone.now().date(),
     }
-    
+
     return render(request, 'modules/compras/form_v3.html', context)
 
 
@@ -3383,17 +3417,17 @@ def crear_compra_v3(request):
 def detalle_compra(request, pk):
     """Vista de detalle de una compra (compatible con legacy y nueva versión)"""
     compra = get_object_or_404(Compra, pk=pk)
-    
+
     # Detectar si es compra legacy o nueva con detalles
     es_legacy = compra.es_compra_legacy()
     detalles = compra.detalles.all() if not es_legacy else None
-    
+
     context = {
         'compra': compra,
         'es_legacy': es_legacy,
         'detalles': detalles,
     }
-    
+
     return render(request, 'modules/compras/compras/detalle.html', context)
 
 
@@ -3403,13 +3437,13 @@ def eliminar_compra(request, pk):
     Compatible con compras legacy (1 producto) y nuevas (múltiples productos vía CompraDetalle)
     """
     compra = get_object_or_404(Compra, pk=pk)
-    
+
     if request.method == 'POST':
         if request.POST.get('confirmar'):
             try:
                 with transaction.atomic():
                     es_legacy = compra.es_compra_legacy()
-                    
+
                     if es_legacy:
                         # LEGACY: Compra de 1 solo producto (campos directos)
                         materia_prima = compra.materia_prima
@@ -3417,11 +3451,11 @@ def eliminar_compra(request, pk):
                         costo_anterior = materia_prima.costo_unitario
                         cantidad_compra = float(compra.cantidad_mayoreo)
                         costo_compra = float(compra.precio_unitario_mayoreo)
-                        
+
                         # 1. Revertir el stock
                         nuevo_stock = stock_anterior - compra.cantidad_mayoreo
                         materia_prima.stock_actual = max(Decimal('0.00'), nuevo_stock)
-                        
+
                         # 2. Recalcular costo unitario (revertir promedio ponderado)
                         if nuevo_stock > 0:
                             valor_total_actual = float(stock_anterior) * float(costo_anterior)
@@ -3431,9 +3465,9 @@ def eliminar_compra(request, pk):
                             materia_prima.costo_unitario = Decimal(str(max(0, nuevo_costo_unitario)))
                         else:
                             materia_prima.costo_unitario = Decimal('0.00')
-                        
+
                         materia_prima.save()
-                        
+
                         # 3. Eliminar lotes FIFO asociados
                         from gestion.models import LoteMateriaPrima
                         lotes_eliminados = LoteMateriaPrima.objects.filter(
@@ -3441,7 +3475,7 @@ def eliminar_compra(request, pk):
                             fecha_entrada=compra.fecha_compra,
                             precio_unitario=compra.precio_unitario_mayoreo
                         ).delete()
-                        
+
                         # 4. Registrar movimiento
                         MovimientoMateriaPrima.objects.create(
                             materia_prima=materia_prima,
@@ -3452,28 +3486,28 @@ def eliminar_compra(request, pk):
                             motivo=f'Eliminación de compra errónea #{compra.pk} - Proveedor: {compra.proveedor}',
                             usuario=request.user
                         )
-                        
+
                         nombre_materia = materia_prima.nombre
                         cantidad_revertida = compra.cantidad_mayoreo
                         unidad = materia_prima.get_unidad_medida_display()
-                        
+
                         # 5. HARD DELETE
                         compra.delete()
-                        
+
                         messages.success(
-                            request, 
+                            request,
                             f'✅ Compra eliminada completamente. '
                             f'Stock revertido: -{cantidad_revertida} {unidad}. '
                             f'Nuevo stock de {nombre_materia}: {materia_prima.stock_actual} {unidad}.'
                         )
                     else:
                         # NUEVA: Compra con múltiples productos (CompraDetalle)
-                        from gestion.models import CompraDetalle, LoteMateriaPrima
-                        
+                        from gestion.models import LoteMateriaPrima
+
                         detalles = compra.detalles.all()
                         items_count = detalles.count()
                         total_revertido = compra.total
-                        
+
                         # Revertir cada detalle
                         for detalle in detalles:
                             materia_prima = detalle.materia_prima
@@ -3481,11 +3515,11 @@ def eliminar_compra(request, pk):
                             costo_anterior = materia_prima.costo_unitario
                             cantidad_compra = float(detalle.cantidad)
                             costo_compra = float(detalle.precio_unitario)
-                            
+
                             # 1. Revertir stock
                             nuevo_stock = stock_anterior - detalle.cantidad
                             materia_prima.stock_actual = max(Decimal('0.00'), nuevo_stock)
-                            
+
                             # 2. Recalcular costo unitario
                             if nuevo_stock > 0:
                                 valor_total_actual = float(stock_anterior) * float(costo_anterior)
@@ -3495,9 +3529,9 @@ def eliminar_compra(request, pk):
                                 materia_prima.costo_unitario = Decimal(str(max(0, nuevo_costo_unitario)))
                             else:
                                 materia_prima.costo_unitario = Decimal('0.00')
-                            
+
                             materia_prima.save()
-                            
+
                             # 3. Eliminar lotes FIFO de este detalle
                             LoteMateriaPrima.objects.filter(
                                 materia_prima=materia_prima,
@@ -3505,7 +3539,7 @@ def eliminar_compra(request, pk):
                                 precio_unitario=detalle.precio_unitario,
                                 cantidad_restante__lte=detalle.cantidad  # Aproximación
                             ).delete()
-                            
+
                             # 4. Registrar movimiento
                             MovimientoMateriaPrima.objects.create(
                                 materia_prima=materia_prima,
@@ -3516,33 +3550,33 @@ def eliminar_compra(request, pk):
                                 motivo=f'Eliminación de compra multi-producto #{compra.pk} - Proveedor: {compra.proveedor}',
                                 usuario=request.user
                             )
-                        
+
                         # 5. HARD DELETE (elimina compra y detalles en cascada)
                         compra.delete()
-                        
+
                         messages.success(
-                            request, 
+                            request,
                             f'✅ Compra multi-producto eliminada completamente. '
                             f'{items_count} producto(s) revertido(s). '
                             f'Total revertido: ${total_revertido}'
                         )
-                    
+
                     return redirect('gestion:lista_compras')
-                    
+
             except Exception as e:
                 messages.error(request, f'❌ Error al eliminar la compra: {str(e)}')
                 return redirect('gestion:lista_compras')
-    
+
     # GET: Mostrar confirmación
     es_legacy = compra.es_compra_legacy()
     detalles = compra.detalles.all() if not es_legacy else None
-    
+
     context = {
         'compra': compra,
         'es_legacy': es_legacy,
         'detalles': detalles,
     }
-    
+
     return render(request, 'modules/compras/confirmar_eliminacion_compra.html', context)
 
 
@@ -3559,7 +3593,7 @@ def crear_receta_v3(request):
                     activa=request.POST.get('activa') == 'True',
                     creador=request.user
                 )
-                
+
                 # Procesar ingredientes
                 ingredientes_data = request.POST
                 index = 0
@@ -3567,10 +3601,10 @@ def crear_receta_v3(request):
                     materia_id = ingredientes_data.get(f'ingredientes[{index}][materia_prima_id]')
                     cantidad = Decimal(ingredientes_data.get(f'ingredientes[{index}][cantidad]', '0'))
                     notas = ingredientes_data.get(f'ingredientes[{index}][notas]', '')
-                    
+
                     if materia_id and cantidad > 0:
                         materia = MateriaPrima.objects.get(id=materia_id)
-                        
+
                         RecetaMateriaPrima.objects.create(
                             receta=receta,
                             materia_prima=materia,
@@ -3578,37 +3612,36 @@ def crear_receta_v3(request):
                             unidad=materia.unidad_medida,
                             notas=notas
                         )
-                    
+
                     index += 1
-                
+
                 # Asociar productos
                 productos_ids = request.POST.getlist('productos')
                 if productos_ids:
                     productos = Producto.objects.filter(id__in=productos_ids)
                     receta.productos.set(productos)
-                
+
                 messages.success(request, f'Receta "{receta.nombre}" creada exitosamente')
                 return redirect('gestion:lista_recetas')
-                
+
         except Exception as e:
             messages.error(request, f'Error al crear receta: {str(e)}')
             return redirect('gestion:crear_receta')
-    
+
     # GET - Mostrar formulario
     materias_primas = MateriaPrima.objects.all().order_by('nombre')
     productos = Producto.objects.all().order_by('nombre')
-    
+
     context = {
         'title': 'Nueva Receta',
         'materias_primas': materias_primas,
         'productos': productos,
     }
-    
+
     return render(request, 'modules/recetas/form.html', context)
 
 
 # ==================== IMPORTAR FUNCIONES API ====================
-from .api import api_productos, api_inventario, api_ventas
 
 
 # ============================================
@@ -3626,10 +3659,10 @@ def alertas_count_api(request):
         }
     """
     from .services.alertas_service import AlertasService
-    
+
     service = AlertasService()
     count = service.get_alertas_count(usuario=request.user, solo_no_leidas=True)
-    
+
     return JsonResponse({'count': count})
 
 
@@ -3655,14 +3688,14 @@ def alertas_no_leidas_api(request):
         }
     """
     from .services.alertas_service import AlertasService
-    
+
     service = AlertasService()
     alertas = service.get_alertas_usuario(
         usuario=request.user,
         solo_no_leidas=True,
         limit=5
     )
-    
+
     # Serializar alertas a JSON
     data = [{
         'id': a.id,
@@ -3673,7 +3706,7 @@ def alertas_no_leidas_api(request):
         'fecha': a.fecha_creacion.strftime('%d/%m/%Y %H:%M'),
         'icono': a.get_icono() if hasattr(a, 'get_icono') else 'bi-info-circle',
     } for a in alertas]
-    
+
     return JsonResponse({'alertas': data})
 
 
@@ -3697,20 +3730,21 @@ def marcar_alerta_leida(request, alerta_id):
             "error": "Alerta no encontrada"
         }
     """
-    from .models import Alerta
     from django.utils import timezone
-    
+
+    from .models import Alerta
+
     try:
         alerta = Alerta.objects.get(id=alerta_id, usuario=request.user)
         alerta.leida = True
         alerta.fecha_lectura = timezone.now()
         alerta.save()
-        
+
         return JsonResponse({'success': True})
-        
+
     except Alerta.DoesNotExist:
         return JsonResponse(
-            {'success': False, 'error': 'Alerta no encontrada'}, 
+            {'success': False, 'error': 'Alerta no encontrada'},
             status=404
         )
 
@@ -3726,17 +3760,17 @@ def alertas_lista(request):
         - no_leidas: boolean, mostrar solo no leídas
         - page: número de página
     """
-    from .services.alertas_service import AlertasService
-    from .models import Alerta
     from django.core.paginator import Paginator
-    
+
+    from .services.alertas_service import AlertasService
+
     service = AlertasService()
-    
+
     # Obtener filtros de GET
     tipo = request.GET.get('tipo', None)
     nivel = request.GET.get('nivel', None)
     solo_no_leidas = request.GET.get('no_leidas', 'false').lower() == 'true'
-    
+
     # Obtener alertas filtradas
     alertas = service.get_alertas_usuario(
         usuario=request.user,
@@ -3744,12 +3778,12 @@ def alertas_lista(request):
         nivel=nivel if nivel else None,
         solo_no_leidas=solo_no_leidas
     )
-    
+
     # Paginación (20 por página)
     paginator = Paginator(alertas, 20)
     page_number = request.GET.get('page', 1)
     alertas_page = paginator.get_page(page_number)
-    
+
     # Opciones para filtros
     tipos_disponibles = [
         ('stock_bajo', 'Stock Bajo'),
@@ -3757,14 +3791,14 @@ def alertas_lista(request):
         ('precio_cambio', 'Cambio de Precio'),
         ('stock_critico', 'Stock Crítico'),
     ]
-    
+
     niveles_disponibles = [
         ('danger', 'Crítico'),
         ('warning', 'Advertencia'),
         ('info', 'Información'),
         ('success', 'Éxito'),
     ]
-    
+
     context = {
         'title': 'Gestión de Alertas',
         'alertas': alertas_page,
@@ -3774,7 +3808,7 @@ def alertas_lista(request):
         'tipos_disponibles': tipos_disponibles,
         'niveles_disponibles': niveles_disponibles,
     }
-    
+
     return render(request, 'gestion/alertas_lista.html', context)
 
 
@@ -3784,9 +3818,10 @@ def configuracion_negocio(request):
     Vista para configurar objetivos y parámetros del negocio.
     Permite al dueño establecer: margen objetivo, rotación, cobertura.
     """
-    from gestion.models import ConfiguracionCostos
     from decimal import Decimal
-    
+
+    from gestion.models import ConfiguracionCostos
+
     # Obtener o crear configuración
     config = ConfiguracionCostos.objects.first()
     if not config:
@@ -3795,29 +3830,29 @@ def configuracion_negocio(request):
             rotacion_objetivo=Decimal('4.00'),
             cobertura_objetivo_dias=30
         )
-    
+
     if request.method == 'POST':
         try:
             # Actualizar objetivos desde el formulario
             config.margen_objetivo = Decimal(request.POST.get('margen_objetivo', '35.00'))
             config.rotacion_objetivo = Decimal(request.POST.get('rotacion_objetivo', '4.00'))
             config.cobertura_objetivo_dias = int(request.POST.get('cobertura_objetivo_dias', '30'))
-            
+
             config.save()
-            
+
             messages.success(
-                request, 
+                request,
                 '✅ Configuración guardada correctamente. Los cambios se reflejarán en todos los dashboards.'
             )
             return redirect('gestion:configuracion_negocio')
-            
+
         except Exception as e:
             messages.error(request, f'Error al guardar configuración: {str(e)}')
-    
+
     context = {
         'config': config
     }
-    
+
     return render(request, 'gestion/configuracion_negocio.html', context)
 
 
@@ -3829,26 +3864,26 @@ def lista_ajustes(request):
     ajustes = AjusteInventario.objects.select_related(
         'producto', 'materia_prima', 'usuario'
     ).all()
-    
+
     # Filtros opcionales
     tipo_filtro = request.GET.get('tipo')
     item_tipo_filtro = request.GET.get('item_tipo')  # 'producto' o 'materia_prima'
-    
+
     if tipo_filtro:
         ajustes = ajustes.filter(tipo=tipo_filtro)
-    
+
     if item_tipo_filtro == 'producto':
         ajustes = ajustes.filter(producto__isnull=False)
     elif item_tipo_filtro == 'materia_prima':
         ajustes = ajustes.filter(materia_prima__isnull=False)
-    
+
     context = {
         'ajustes': ajustes,
         'tipo_filtro': tipo_filtro,
         'item_tipo_filtro': item_tipo_filtro,
         'tipos_ajuste': AjusteInventario.TIPO_CHOICES,
     }
-    
+
     return render(request, 'modules/ajustes/lista.html', context)
 
 
@@ -3858,26 +3893,26 @@ def crear_ajuste_producto(request, producto_id=None):
     producto = None
     if producto_id:
         producto = get_object_or_404(Producto, pk=producto_id)
-    
+
     if request.method == 'POST':
         form = AjusteProductoForm(request.POST)
         if form.is_valid():
             ajuste = form.save(commit=False)
             ajuste.usuario = request.user
             ajuste.save()
-            
+
             # IMPORTANTE: Actualizar el stock del producto
             producto = ajuste.producto
             producto.stock = ajuste.stock_nuevo
             producto.save()
-            
+
             messages.success(
                 request,
                 f'✅ Ajuste registrado: {ajuste.item_nombre} '
                 f'{ajuste.stock_anterior}→{ajuste.stock_nuevo} '
                 f'({"+"+str(ajuste.diferencia) if ajuste.diferencia > 0 else str(ajuste.diferencia)})'
             )
-            
+
             # Redirigir al detalle del producto si venimos de ahí
             if producto_id:
                 return redirect('gestion:detalle_producto', pk=producto_id)
@@ -3891,13 +3926,13 @@ def crear_ajuste_producto(request, producto_id=None):
             form = AjusteProductoForm(producto_id=producto_id)
         else:
             form = AjusteProductoForm()
-    
+
     context = {
         'form': form,
         'producto': producto,
         'title': f'Ajustar Stock - {producto.nombre}' if producto else 'Ajustar Stock de Producto',
     }
-    
+
     return render(request, 'modules/ajustes/form_producto.html', context)
 
 
@@ -3907,26 +3942,26 @@ def crear_ajuste_materia_prima(request, mp_id=None):
     materia_prima = None
     if mp_id:
         materia_prima = get_object_or_404(MateriaPrima, pk=mp_id)
-    
+
     if request.method == 'POST':
         form = AjusteMateriaPrimaForm(request.POST)
         if form.is_valid():
             ajuste = form.save(commit=False)
             ajuste.usuario = request.user
             ajuste.save()
-            
+
             # IMPORTANTE: Actualizar el stock de la materia prima
             mp = ajuste.materia_prima
             mp.stock_actual = ajuste.stock_nuevo
             mp.save()
-            
+
             messages.success(
                 request,
                 f'✅ Ajuste registrado: {ajuste.item_nombre} '
                 f'{ajuste.stock_anterior}→{ajuste.stock_nuevo} '
                 f'({"+"+str(ajuste.diferencia) if ajuste.diferencia > 0 else str(ajuste.diferencia)})'
             )
-            
+
             # Redirigir al detalle de MP si venimos de ahí
             if mp_id:
                 return redirect('gestion:detalle_materia_prima', pk=mp_id)
@@ -3940,13 +3975,13 @@ def crear_ajuste_materia_prima(request, mp_id=None):
             form = AjusteMateriaPrimaForm(materia_prima_id=mp_id)
         else:
             form = AjusteMateriaPrimaForm()
-    
+
     context = {
         'form': form,
         'materia_prima': materia_prima,
         'title': f'Ajustar Stock - {materia_prima.nombre}' if materia_prima else 'Ajustar Stock de Materia Prima',
     }
-    
+
     return render(request, 'modules/ajustes/form_materia_prima.html', context)
 
 
@@ -3957,9 +3992,9 @@ def detalle_ajuste(request, pk):
         AjusteInventario.objects.select_related('producto', 'materia_prima', 'usuario'),
         pk=pk
     )
-    
+
     context = {
         'ajuste': ajuste,
     }
-    
+
     return render(request, 'modules/ajustes/detalle.html', context)

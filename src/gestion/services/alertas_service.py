@@ -2,16 +2,18 @@
 Alertas Service - Generación inteligente de alertas automáticas
 """
 
-from decimal import Decimal
 from datetime import timedelta
-from django.utils import timezone
+from decimal import Decimal
+
 from django.db.models import F, Sum
-from gestion.models import Producto, Venta, VentaDetalle
+from django.utils import timezone
+
+from gestion.models import Producto, VentaDetalle
 
 
 class AlertasService:
     """Servicio para generar y gestionar alertas automáticas"""
-    
+
     @staticmethod
     def generar_alertas_stock(usuario):
         """
@@ -19,9 +21,9 @@ class AlertasService:
         Returns: número de alertas generadas
         """
         from gestion.models import Alerta
-        
+
         alertas_creadas = 0
-        
+
         # Stock agotado
         productos_agotados = Producto.objects.filter(stock=0)
         for producto in productos_agotados:
@@ -32,12 +34,12 @@ class AlertasService:
                 usuario=usuario,
                 leida=False
             ).exists()
-            
+
             if not existe:
                 # Calcular pérdida potencial (promedio de ventas * precio)
                 ventas_promedio_dia = producto.ventas_promedio_diarias if hasattr(producto, 'ventas_promedio_diarias') else 1
                 perdida_estimada = ventas_promedio_dia * producto.precio * 30  # 30 días
-                
+
                 Alerta.objects.create(
                     tipo='stock_agotado',
                     nivel='danger',
@@ -49,13 +51,13 @@ class AlertasService:
                     valor_impacto=perdida_estimada
                 )
                 alertas_creadas += 1
-        
+
         # Stock crítico (bajo mínimo pero no agotado)
         productos_criticos = Producto.objects.filter(
             stock__lte=F('stock_minimo'),
             stock__gt=0
         )
-        
+
         for producto in productos_criticos:
             existe = Alerta.objects.filter(
                 tipo='stock_critico',
@@ -63,10 +65,10 @@ class AlertasService:
                 usuario=usuario,
                 leida=False
             ).exists()
-            
+
             if not existe:
                 dias_restantes = producto.stock / max(producto.ventas_promedio_diarias if hasattr(producto, 'ventas_promedio_diarias') else 1, 1)
-                
+
                 Alerta.objects.create(
                     tipo='stock_critico',
                     nivel='warning',
@@ -78,9 +80,9 @@ class AlertasService:
                     valor_impacto=producto.precio * 30  # Pérdida potencial si se agota
                 )
                 alertas_creadas += 1
-        
+
         return alertas_creadas
-    
+
     @staticmethod
     def generar_alertas_vencimiento(usuario):
         """
@@ -91,17 +93,17 @@ class AlertasService:
         TODO: Habilitar cuando se implemente control de vencimientos
         """
         # from gestion.models import Alerta
-        
+
         alertas_creadas = 0
         # fecha_limite = timezone.now() + timedelta(days=30)
-        
+
         # TODO: Descomentar cuando Producto tenga fecha_vencimiento
         # productos_por_vencer = Producto.objects.filter(
         #     fecha_vencimiento__lte=fecha_limite,
         #     fecha_vencimiento__gte=timezone.now(),
         #     stock__gt=0
         # )
-        
+
         # for producto in productos_por_vencer:
         #     existe = Alerta.objects.filter(
         #         tipo='vencimiento',
@@ -109,15 +111,15 @@ class AlertasService:
         #         usuario=usuario,
         #         leida=False
         #     ).exists()
-            
+
         #     if not existe:
         #         dias_restantes = (producto.fecha_vencimiento - timezone.now().date()).days
         #         nivel = 'danger' if dias_restantes <= 7 else 'warning'
-                
+
         #         # Calcular pérdida potencial si vence
         #         costo_real = producto.calcular_costo_real()
         #         perdida_potencial = costo_real * producto.stock
-                
+
         #         Alerta.objects.create(
         #             tipo='vencimiento',
         #             nivel=nivel,
@@ -130,9 +132,9 @@ class AlertasService:
         #             fecha_expiracion=producto.fecha_vencimiento
         #         )
         #         alertas_creadas += 1
-        
+
         return alertas_creadas
-    
+
     @staticmethod
     def generar_alertas_rentabilidad(usuario):
         """
@@ -140,20 +142,20 @@ class AlertasService:
         Returns: número de alertas generadas
         """
         from gestion.models import Alerta
-        
+
         alertas_creadas = 0
         productos = Producto.objects.all()
-        
+
         for producto in productos:
             precio_venta = Decimal(str(producto.precio))
             costo_real = producto.calcular_costo_real()
-            
+
             if precio_venta <= 0 or costo_real <= 0:
                 continue
-            
+
             # Calcular margen
             margen = ((precio_venta - costo_real) / precio_venta) * 100
-            
+
             # MARGEN NEGATIVO (pérdida)
             if margen < 0:
                 existe = Alerta.objects.filter(
@@ -162,12 +164,12 @@ class AlertasService:
                     usuario=usuario,
                     leida=False
                 ).exists()
-                
+
                 if not existe:
                     precio_sugerido = costo_real * Decimal('1.30')  # +30% margen
                     perdida_por_unidad = abs(precio_venta - costo_real)
                     perdida_total = perdida_por_unidad * producto.stock
-                    
+
                     Alerta.objects.create(
                         tipo='margen_negativo',
                         nivel='danger',
@@ -180,7 +182,7 @@ class AlertasService:
                         valor_impacto=perdida_total
                     )
                     alertas_creadas += 1
-            
+
             # MARGEN BAJO (<15%)
             elif margen < 15:
                 existe = Alerta.objects.filter(
@@ -189,10 +191,10 @@ class AlertasService:
                     usuario=usuario,
                     leida=False
                 ).exists()
-                
+
                 if not existe:
                     precio_sugerido = costo_real * Decimal('1.20')  # +20% margen mínimo
-                    
+
                     Alerta.objects.create(
                         tipo='margen_bajo',
                         nivel='warning',
@@ -203,9 +205,9 @@ class AlertasService:
                         accion_sugerida=f'Aumentar precio a ${precio_sugerido:.2f} o negociar mejor costo con proveedor'
                     )
                     alertas_creadas += 1
-        
+
         return alertas_creadas
-    
+
     @staticmethod
     def generar_alertas_stock_muerto(usuario):
         """
@@ -213,20 +215,20 @@ class AlertasService:
         Returns: número de alertas generadas
         """
         from gestion.models import Alerta
-        
+
         alertas_creadas = 0
         fecha_limite = timezone.now() - timedelta(days=60)  # Sin ventas en 60 días
-        
+
         # Productos con stock pero sin ventas recientes
         productos_con_stock = Producto.objects.filter(stock__gt=0)
-        
+
         for producto in productos_con_stock:
             # Verificar última venta
             ultima_venta = VentaDetalle.objects.filter(
                 producto=producto,
                 venta__eliminada=False
             ).order_by('-venta__fecha').first()
-            
+
             if not ultima_venta or ultima_venta.venta.fecha < fecha_limite:
                 existe = Alerta.objects.filter(
                     tipo='stock_muerto',
@@ -234,12 +236,12 @@ class AlertasService:
                     usuario=usuario,
                     leida=False
                 ).exists()
-                
+
                 if not existe:
                     costo_real = producto.calcular_costo_real()
                     capital_inmovilizado = costo_real * producto.stock
                     dias_sin_venta = (timezone.now().date() - ultima_venta.venta.fecha.date()).days if ultima_venta else 999
-                    
+
                     Alerta.objects.create(
                         tipo='stock_muerto',
                         nivel='warning',
@@ -252,9 +254,9 @@ class AlertasService:
                         valor_impacto=capital_inmovilizado
                     )
                     alertas_creadas += 1
-        
+
         return alertas_creadas
-    
+
     @staticmethod
     def generar_alertas_oportunidades(usuario):
         """
@@ -262,10 +264,10 @@ class AlertasService:
         Returns: número de alertas generadas
         """
         from gestion.models import Alerta
-        
+
         alertas_creadas = 0
         fecha_inicio = timezone.now() - timedelta(days=30)
-        
+
         # Productos con alta demanda y margen bajo (oportunidad de aumentar precio)
         productos_vendidos = VentaDetalle.objects.filter(
             venta__fecha__gte=fecha_inicio,
@@ -273,18 +275,18 @@ class AlertasService:
         ).values('producto').annotate(
             total_vendido=Sum('cantidad')
         ).filter(total_vendido__gte=20)  # Más de 20 unidades vendidas en el mes
-        
+
         for item in productos_vendidos:
             producto = Producto.objects.get(id=item['producto'])
-            
+
             precio_venta = Decimal(str(producto.precio))
             costo_real = producto.calcular_costo_real()
-            
+
             if precio_venta <= 0 or costo_real <= 0:
                 continue
-            
+
             margen = ((precio_venta - costo_real) / precio_venta) * 100
-            
+
             # Alta demanda + margen bajo = Oportunidad
             if margen < 30:
                 existe = Alerta.objects.filter(
@@ -293,11 +295,11 @@ class AlertasService:
                     usuario=usuario,
                     leida=False
                 ).exists()
-                
+
                 if not existe:
                     precio_sugerido = costo_real * Decimal('1.40')  # 40% margen
                     ganancia_adicional = (precio_sugerido - precio_venta) * item['total_vendido']
-                    
+
                     Alerta.objects.create(
                         tipo='oportunidad_venta',
                         nivel='success',
@@ -310,9 +312,9 @@ class AlertasService:
                         valor_impacto=ganancia_adicional
                     )
                     alertas_creadas += 1
-        
+
         return alertas_creadas
-    
+
     @classmethod
     def generar_todas_alertas(cls, usuario):
         """
@@ -326,30 +328,30 @@ class AlertasService:
             'stock_muerto': cls.generar_alertas_stock_muerto(usuario),
             'oportunidades': cls.generar_alertas_oportunidades(usuario),
         }
-        
+
         resultado['total'] = sum(resultado.values())
         return resultado
-    
+
     @staticmethod
     def limpiar_alertas_antiguas(dias=30):
         """
         Archiva alertas leídas con más de X días
         """
         from gestion.models import Alerta
-        
+
         fecha_limite = timezone.now() - timedelta(days=dias)
         alertas_archivadas = Alerta.objects.filter(
             leida=True,
             fecha_creacion__lt=fecha_limite,
             archivada=False
         ).update(archivada=True)
-        
+
         return alertas_archivadas
-    
+
     # ==========================================
     # FASE 3: MÉTODOS PARA UI DE ALERTAS
     # ==========================================
-    
+
     @staticmethod
     def get_alertas_count(usuario=None, tipo=None, nivel=None, solo_no_leidas=True):
         """
@@ -365,9 +367,9 @@ class AlertasService:
             int: Cantidad de alertas que cumplen los criterios
         """
         from gestion.models import Alerta
-        
+
         queryset = Alerta.objects.filter(archivada=False)
-        
+
         if usuario:
             queryset = queryset.filter(usuario=usuario)
         if tipo:
@@ -376,9 +378,9 @@ class AlertasService:
             queryset = queryset.filter(nivel=nivel)
         if solo_no_leidas:
             queryset = queryset.filter(leida=False)
-        
+
         return queryset.count()
-    
+
     @staticmethod
     def get_alertas_usuario(usuario, tipo=None, nivel=None, solo_no_leidas=False, limit=None):
         """
@@ -395,22 +397,22 @@ class AlertasService:
             QuerySet: Alertas ordenadas por fecha (más recientes primero)
         """
         from gestion.models import Alerta
-        
+
         queryset = Alerta.objects.filter(
             usuario=usuario,
             archivada=False
         )
-        
+
         if tipo:
             queryset = queryset.filter(tipo=tipo)
         if nivel:
             queryset = queryset.filter(nivel=nivel)
         if solo_no_leidas:
             queryset = queryset.filter(leida=False)
-        
+
         queryset = queryset.order_by('-fecha_creacion')
-        
+
         if limit:
             queryset = queryset[:limit]
-        
+
         return queryset

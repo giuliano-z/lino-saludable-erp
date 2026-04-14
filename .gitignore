@@ -92,4 +92,5 @@ package-lock.json
 # Temporary
 *.tmp
 *.temp
-.cache/
+.cache/CLAUDE.local.md
+.env.save

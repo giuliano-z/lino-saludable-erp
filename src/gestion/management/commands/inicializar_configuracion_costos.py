@@ -1,5 +1,7 @@
 from django.core.management.base import BaseCommand
+
 from gestion.models import ConfiguracionCostos
+
 
 class Command(BaseCommand):
     help = 'Inicializa la configuración de costos con valores predeterminados'
@@ -18,11 +20,11 @@ class Command(BaseCommand):
             costo_envases_por_kg=50.00,  # $50 por kg en envases
             costo_etiquetas_por_unidad=5.00,  # $5 por etiqueta
             costo_envio_promedio=100.00,  # $100 envío promedio
-            
+
             # Tiempo y mano de obra
             tiempo_fraccionamiento_por_kg=10.00,  # 10 minutos por kg
             valor_hora_trabajo=500.00,  # $500 por hora de trabajo
-            
+
             # Configuraciones globales
             incluir_costos_indirectos=False,  # Inicialmente desactivado
             redondear_precios=True,

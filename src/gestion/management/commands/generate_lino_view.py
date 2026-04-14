@@ -2,29 +2,31 @@
 Generador automático de vistas usando el patrón LINO
 Uso: python manage.py generate_lino_view compras --model=Compra --title="Gestión de Compras"
 """
-from django.core.management.base import BaseCommand
-from django.template import Template, Context
 from pathlib import Path
+
+from django.core.management.base import BaseCommand
+from django.template import Context, Template
+
 
 class Command(BaseCommand):
     help = 'Genera una vista completa usando el patrón LINO'
-    
+
     def add_arguments(self, parser):
         parser.add_argument('view_name', type=str, help='Nombre de la vista (ej: compras)')
         parser.add_argument('--model', type=str, help='Nombre del modelo Django')
         parser.add_argument('--title', type=str, help='Título de la vista')
         parser.add_argument('--icon', type=str, default='bi-list', help='Ícono Bootstrap')
         parser.add_argument('--color', type=str, default='green', help='Color del tema LINO')
-    
+
     def handle(self, *args, **options):
         view_name = options['view_name']
         model_name = options.get('model', view_name.capitalize())
         title = options.get('title', f'Gestión de {view_name.capitalize()}')
         icon = options['icon']
         color = options['color']
-        
+
         self.stdout.write(f'🚀 Generando vista LINO: {view_name}')
-        
+
         # Template base optimizado
         template_content = """{% extends 'gestion/base.html' %}
 {% load dietetica_tags %}
@@ -98,13 +100,13 @@ class Command(BaseCommand):
         </div>
     </div>
 {% endblock %}"""
-        
+
         # Crear el archivo de template
         template_dir = Path('src/gestion/templates/modules') / view_name
         template_dir.mkdir(parents=True, exist_ok=True)
-        
+
         template_file = template_dir / f'lista_{view_name}.html'
-        
+
         # Renderizar el template
         template = Template(template_content)
         context = Context({
@@ -113,15 +115,15 @@ class Command(BaseCommand):
             'color': color,
             'view_name': view_name
         })
-        
+
         with open(template_file, 'w', encoding='utf-8') as f:
             f.write(template.render(context))
-        
+
         self.stdout.write(self.style.SUCCESS(f'✅ Vista generada: {template_file}'))
-        
+
         # Mostrar próximos pasos
         self.stdout.write(self.style.WARNING('\n📋 Próximos pasos:'))
-        self.stdout.write(f'1. Agregar la vista en views.py')
-        self.stdout.write(f'2. Configurar la URL en urls.py')
-        self.stdout.write(f'3. Personalizar los KPIs específicos')
-        self.stdout.write(f'4. Implementar la lógica de filtros')
+        self.stdout.write('1. Agregar la vista en views.py')
+        self.stdout.write('2. Configurar la URL en urls.py')
+        self.stdout.write('3. Personalizar los KPIs específicos')
+        self.stdout.write('4. Implementar la lógica de filtros')

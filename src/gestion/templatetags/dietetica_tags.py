@@ -1,5 +1,4 @@
 from django import template
-from django.utils.safestring import mark_safe
 from django.utils.html import format_html
 
 register = template.Library()
@@ -10,7 +9,7 @@ def get_color_atributo(producto, atributo):
     """Template filter para obtener el color de un atributo dietético."""
     return producto.get_color_atributo(atributo)
 
-@register.filter  
+@register.filter
 def split(value, delimiter=','):
     """Template filter para dividir strings."""
     if value:
@@ -22,7 +21,7 @@ def attr_display_name(attr):
     """Template filter para mostrar nombres amigables de atributos."""
     names = {
         'organico': 'Orgánico',
-        'vegano': 'Vegano', 
+        'vegano': 'Vegano',
         'sin_tacc': 'Sin TACC',
         'sin_azucar': 'Sin Azúcar',
         'integral': 'Integral',
@@ -40,7 +39,7 @@ def add_class(field, css_class):
             new_classes = f"{existing_classes} {css_class}"
         else:
             new_classes = css_class
-            
+
         field.field.widget.attrs['class'] = new_classes
         return field
     except AttributeError:
@@ -158,7 +157,7 @@ def lino_icon(name, color="", size="", extra_class=""):
         classes.append(size)
     if extra_class:
         classes.append(extra_class)
-    
+
     return format_html('<i class="{}"></i>', ' '.join(classes))
 
 @register.filter
@@ -170,7 +169,7 @@ def lino_color_class(color_name):
     """
     color_map = {
         'olive': 'lino-card-header--olive',
-        'green': 'lino-card-header--green', 
+        'green': 'lino-card-header--green',
         'brown': 'lino-card-header--brown',
         'earth': 'lino-card-header--earth',
         'success': 'lino-card-header--success',
@@ -215,7 +214,7 @@ def lino_size_class(size, component='btn'):
         }
     else:
         return ''
-    
+
     return size_map.get(size, '')
 
 @register.filter
@@ -250,19 +249,19 @@ def lino_actions_panel(actions=None, title="Acciones Rápidas", size="compact"):
             'color': 'success'
         },
         {
-            'text': 'Agregar Producto', 
+            'text': 'Agregar Producto',
             'url': 'gestion:crear_producto',
             'icon': 'bi-box',
             'color': 'orange'
         },
         {
             'text': 'Generar Reporte',
-            'url': 'gestion:reportes', 
+            'url': 'gestion:reportes',
             'icon': 'bi-graph-up',
             'color': 'olive'
         }
     ]
-    
+
     return {
         'actions': actions or default_actions,
         'title': title,
@@ -270,8 +269,8 @@ def lino_actions_panel(actions=None, title="Acciones Rápidas", size="compact"):
     }
 
 @register.inclusion_tag('components/lino_search_panel.html')
-def lino_search_panel(title="Panel de Control", search_placeholder="Buscar...", 
-                     show_select_filter=False, select_options=None, 
+def lino_search_panel(title="Panel de Control", search_placeholder="Buscar...",
+                     show_select_filter=False, select_options=None,
                      select_name="categoria", select_placeholder="Todas las categorías",
                      quick_filters=None):
     """
