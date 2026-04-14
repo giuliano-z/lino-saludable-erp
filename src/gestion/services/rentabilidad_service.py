@@ -47,8 +47,18 @@ class RentabilidadService:
         Returns:
             dict con: objetivo_margen, rentables, en_perdida, margen_promedio
         """
-        # Query única para obtener todos los productos con sus datos
-        productos = Producto.objects.select_related().all()
+        # Una query para todos los productos con sus relaciones necesarias
+        productos = Producto.objects.select_related('materia_prima_asociada', 'receta').all()
+
+        # Pre-agregar ventas del mes por producto — evita N queries en el loop
+        ventas_mes_por_producto = dict(
+            VentaDetalle.objects.filter(
+                venta__fecha__date__gte=self.inicio_mes,
+                venta__eliminada=False
+            ).values('producto_id')
+            .annotate(total=Sum('subtotal'))
+            .values_list('producto_id', 'total')
+        )
 
         total_productos = 0
         productos_rentables = 0
@@ -75,12 +85,8 @@ class RentabilidadService:
                 elif margen >= 20:  # Umbral rentable: 20%+
                     productos_rentables += 1
 
-                # Obtener ventas del mes para ponderar
-                ventas_mes = VentaDetalle.objects.filter(
-                    producto=producto,
-                    venta__fecha__date__gte=self.inicio_mes,
-                    venta__eliminada=False
-                ).aggregate(total=Sum('subtotal'))['total'] or Decimal('0')
+                # Lookup en dict local — sin query a DB
+                ventas_mes = ventas_mes_por_producto.get(producto.pk, Decimal('0'))
 
                 # Ponderación por ventas
                 suma_margenes_ponderados += margen * ventas_mes

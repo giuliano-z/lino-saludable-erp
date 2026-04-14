@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 
 from django.db.models import Count, F, Sum
+from django.db.models.functions import TruncDate
 from django.utils import timezone
 
 from gestion.models import Compra, Venta, VentaDetalle
@@ -139,45 +140,51 @@ class DashboardService:
             return Decimal('0.0')
 
     def _get_sparkline_ventas(self):
-        """Ventas de los últimos 7 días para sparkline"""
-        sparkline = []
-        for i in range(7):
-            fecha = self.hoy - timedelta(days=6-i)
-            total = Venta.objects.filter(
-                fecha__date=fecha,
+        """Ventas de los últimos 7 días — una sola query con GROUP BY fecha"""
+        desde = self.hoy - timedelta(days=6)
+        ventas = dict(
+            Venta.objects.filter(
+                fecha__date__gte=desde,
+                fecha__date__lte=self.hoy,
                 eliminada=False
-            ).aggregate(total=Sum('total'))['total'] or Decimal('0')
-            sparkline.append(float(total))
-        return sparkline
+            ).values('fecha__date')
+            .annotate(total=Sum('total'))
+            .values_list('fecha__date', 'total')
+        )
+        return [float(ventas.get(self.hoy - timedelta(days=6-i), 0)) for i in range(7)]
 
     def _get_sparkline_productos(self):
-        """Productos vendidos últimos 7 días para sparkline"""
-        sparkline = []
-        for i in range(7):
-            fecha = self.hoy - timedelta(days=6-i)
-            total = VentaDetalle.objects.filter(
-                venta__fecha__date=fecha,
+        """Productos vendidos últimos 7 días — una sola query con GROUP BY fecha"""
+        desde = self.hoy - timedelta(days=6)
+        cantidades = dict(
+            VentaDetalle.objects.filter(
+                venta__fecha__date__gte=desde,
+                venta__fecha__date__lte=self.hoy,
                 venta__eliminada=False
-            ).aggregate(total=Sum('cantidad'))['total'] or 0
-            sparkline.append(total)
-        return sparkline
+            ).values('venta__fecha__date')
+            .annotate(total=Sum('cantidad'))
+            .values_list('venta__fecha__date', 'total')
+        )
+        return [cantidades.get(self.hoy - timedelta(days=6-i), 0) for i in range(7)]
 
     def _get_sparkline_compras(self):
-        """Compras de los últimos 7 días para sparkline (compatible legacy + nuevo)"""
+        """Compras de los últimos 7 días — una sola query con GROUP BY fecha"""
         from django.db.models import Case, F, When
-        sparkline = []
-        for i in range(7):
-            fecha = self.hoy - timedelta(days=6-i)
-            total = Compra.objects.filter(
-                fecha_compra=fecha
+        desde = self.hoy - timedelta(days=6)
+        compras = dict(
+            Compra.objects.filter(
+                fecha_compra__gte=desde,
+                fecha_compra__lte=self.hoy
             ).annotate(
                 importe=Case(
                     When(total__isnull=False, then=F('total')),
                     default=F('precio_mayoreo')
                 )
-            ).aggregate(total=Sum('importe'))['total'] or Decimal('0')
-            sparkline.append(float(total))
-        return sparkline
+            ).values('fecha_compra')
+            .annotate(total=Sum('importe'))
+            .values_list('fecha_compra', 'total')
+        )
+        return [float(compras.get(self.hoy - timedelta(days=6-i), 0)) for i in range(7)]
 
     def get_resumen_hoy(self):
         """Resumen del día actual"""
@@ -226,15 +233,14 @@ class DashboardService:
                 'url': f'/gestion/ventas/{venta.id}/'
             })
 
-        # Compras recientes (últimas 5)
-        compras = Compra.objects.order_by('-fecha_compra')[:5]
+        # Compras recientes (últimas 5) — prefetch evita N+1 en detalles
+        compras = Compra.objects.prefetch_related('detalles').order_by('-fecha_compra')[:5]
         for compra in compras:
             # Calcular precio desde detalles o usar precio_mayoreo legacy
             precio = compra.precio_mayoreo if compra.precio_mayoreo else 0
             if precio == 0:
-                # Si no hay precio_mayoreo, calcular desde detalles
-                detalles = compra.detalles.all()
-                precio = sum(d.precio_unitario * d.cantidad for d in detalles)
+                # detalles ya están en memoria por prefetch_related
+                precio = sum(d.precio_unitario * d.cantidad for d in compra.detalles.all())
 
             actividades.append({
                 'tipo': 'compra',
@@ -311,13 +317,13 @@ class DashboardService:
         """
         desde = self.hoy - timedelta(days=dias-1)
 
-        # Agrupar ventas por día
+        # Agrupar ventas por día — TruncDate reemplaza .extra() deprecado
         ventas_periodo = Venta.objects.filter(
             fecha__date__gte=desde,
             fecha__date__lte=self.hoy,
             eliminada=False
-        ).extra(
-            select={'fecha_dia': 'DATE(fecha)'}
+        ).annotate(
+            fecha_dia=TruncDate('fecha')
         ).values('fecha_dia').annotate(
             total=Sum('total'),
             cantidad=Count('id')
@@ -328,15 +334,7 @@ class DashboardService:
         datos = []
         fecha_actual = desde
 
-        # Convertir ventas_dict asegurando que las fechas sean objetos date
-        ventas_dict = {}
-        for v in ventas_periodo:
-            fecha = v['fecha_dia']
-            # Asegurar que sea un objeto date
-            if isinstance(fecha, str):
-                from datetime import datetime
-                fecha = datetime.strptime(fecha, '%Y-%m-%d').date()
-            ventas_dict[fecha] = float(v['total'])
+        ventas_dict = {v['fecha_dia']: float(v['total']) for v in ventas_periodo}
 
         while fecha_actual <= self.hoy:
             labels.append(fecha_actual.strftime('%d/%m'))
@@ -360,8 +358,8 @@ class DashboardService:
                 fecha__date__gte=desde_anterior,
                 fecha__date__lte=hasta_anterior,
                 eliminada=False
-            ).extra(
-                select={'fecha_dia': 'DATE(fecha)'}
+            ).annotate(
+                fecha_dia=TruncDate('fecha')
             ).values('fecha_dia').annotate(
                 total=Sum('total')
             ).order_by('fecha_dia')

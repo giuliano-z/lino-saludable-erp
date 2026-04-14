@@ -38,7 +38,7 @@ def lista_ventas(request):
 
     from gestion.utils.kpi_builder import prepare_ventas_kpis
 
-    ventas = Venta.objects.filter(eliminada=False)  # Solo ventas activas
+    ventas = Venta.objects.filter(eliminada=False).prefetch_related('detalles__producto')
 
     # Filtros
     query = request.GET.get('q')
