@@ -13,7 +13,9 @@ Funcionalidades:
 from datetime import datetime
 
 from django.contrib import messages
+from django.conf import settings
 from django.contrib.auth.decorators import login_required
+from django_ratelimit.decorators import ratelimit
 from django.db import models, transaction
 from django.db.models import F, Q, Sum
 from django.http import HttpResponse
@@ -102,6 +104,7 @@ def lista_productos(request):
 
 
 @login_required
+@ratelimit(key='user', rate=getattr(settings, 'RATELIMIT_PRODUCTOS', '50/h'), method='POST', block=True)
 def crear_producto(request):
     """Vista para crear un nuevo producto."""
     if not request.user.has_perm('gestion.add_producto'):

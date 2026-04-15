@@ -14,8 +14,10 @@ import traceback
 from decimal import Decimal
 
 from django.contrib import messages
+from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.db import transaction
+from django_ratelimit.decorators import ratelimit
 from django.db.models import Q
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -102,6 +104,7 @@ def lista_compras(request):
 
 
 @login_required
+@ratelimit(key='user', rate=getattr(settings, 'RATELIMIT_COMPRAS', '20/h'), method='POST', block=True)
 def crear_compra(request):
     """
     Vista CRÍTICA: Crear compra de materia prima con logging y validaciones.
