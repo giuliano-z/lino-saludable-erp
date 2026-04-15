@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from django.contrib.auth.models import User
 from django.core.validators import MinValueValidator
-from django.db import models
+from django.db import models, transaction
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
@@ -1154,34 +1154,35 @@ class Compra(models.Model):
         # Calcula el precio unitario y actualiza el stock/costo de la materia prima
         if self.cantidad_mayoreo and self.precio_mayoreo:
             self.precio_unitario_mayoreo = self.precio_mayoreo / self.cantidad_mayoreo
-        super().save(*args, **kwargs)
-        materia = self.materia_prima
-        # Aplica promedio ponderado para el costo unitario
-        if materia:
-            stock_anterior = materia.stock_actual
-            costo_anterior = materia.costo_unitario
-            nueva_cantidad = float(self.cantidad_mayoreo)
-            nuevo_costo_total = float(self.precio_mayoreo)
-            total_stock = float(stock_anterior) + nueva_cantidad
-            if total_stock > 0:
-                # Promedio ponderado
-                nuevo_costo_unitario = (
-                    (float(stock_anterior) * float(costo_anterior) + nuevo_costo_total)
-                    / total_stock
-                )
-                materia.costo_unitario = nuevo_costo_unitario
-            materia.stock_actual = total_stock
-            materia.save()
+        with transaction.atomic():
+            super().save(*args, **kwargs)
+            materia = self.materia_prima
+            # Aplica promedio ponderado para el costo unitario
+            if materia:
+                stock_anterior = materia.stock_actual
+                costo_anterior = materia.costo_unitario
+                nueva_cantidad = self.cantidad_mayoreo
+                nuevo_costo_total = self.precio_mayoreo
+                total_stock = stock_anterior + nueva_cantidad
+                if total_stock > 0:
+                    # Promedio ponderado — todo en Decimal para evitar errores de redondeo
+                    nuevo_costo_unitario = (
+                        (stock_anterior * costo_anterior + nuevo_costo_total)
+                        / total_stock
+                    )
+                    materia.costo_unitario = nuevo_costo_unitario
+                materia.stock_actual = total_stock
+                materia.save()
 
-            # FIFO: registra lote de materia prima
-            from .models import LoteMateriaPrima
-            LoteMateriaPrima.objects.create(
-                materia_prima=materia,
-                cantidad=nueva_cantidad,
-                cantidad_disponible=nueva_cantidad,
-                precio_unitario=self.precio_unitario_mayoreo,
-                fecha_entrada=self.fecha_compra
-            )
+                # FIFO: registra lote de materia prima
+                from .models import LoteMateriaPrima
+                LoteMateriaPrima.objects.create(
+                    materia_prima=materia,
+                    cantidad=nueva_cantidad,
+                    cantidad_disponible=nueva_cantidad,
+                    precio_unitario=self.precio_unitario_mayoreo,
+                    fecha_entrada=self.fecha_compra
+                )
 
 
 # ==================== MODELO COMPRA DETALLE ====================
@@ -1235,41 +1236,40 @@ class CompraDetalle(models.Model):
         # 1. Calcular subtotal
         self.subtotal = self.cantidad * self.precio_unitario
 
-        # 2. Guardar el detalle
-        super().save(*args, **kwargs)
+        with transaction.atomic():
+            # 2. Guardar el detalle
+            super().save(*args, **kwargs)
 
-        # 3. Actualizar stock y costo de materia prima (promedio ponderado)
-        materia = self.materia_prima
-        stock_anterior = materia.stock_actual
-        costo_anterior = materia.costo_unitario
-        nueva_cantidad = float(self.cantidad)
-        nuevo_costo_unitario = float(self.precio_unitario)
+            # 3. Actualizar stock y costo de materia prima (promedio ponderado)
+            materia = self.materia_prima
+            stock_anterior = materia.stock_actual
+            costo_anterior = materia.costo_unitario
+            nueva_cantidad = self.cantidad
+            total_stock = stock_anterior + nueva_cantidad
 
-        # Calcular nuevo stock
-        total_stock = float(stock_anterior) + nueva_cantidad
+            # Calcular nuevo costo (promedio ponderado) — todo Decimal
+            if total_stock > 0:
+                promedio_ponderado = (
+                    (stock_anterior * costo_anterior + nueva_cantidad * self.precio_unitario)
+                    / total_stock
+                )
+                materia.costo_unitario = promedio_ponderado
 
-        # Calcular nuevo costo (promedio ponderado)
-        if total_stock > 0:
-            valor_anterior = float(stock_anterior) * float(costo_anterior)
-            valor_nuevo = nueva_cantidad * nuevo_costo_unitario
-            promedio_ponderado = (valor_anterior + valor_nuevo) / total_stock
-            materia.costo_unitario = Decimal(str(promedio_ponderado))
+            materia.stock_actual = total_stock
+            materia.save()
 
-        materia.stock_actual = Decimal(str(total_stock))
-        materia.save()
+            # 4. Crear lote FIFO
+            from .models import LoteMateriaPrima
+            LoteMateriaPrima.objects.create(
+                materia_prima=materia,
+                cantidad=self.cantidad,
+                cantidad_disponible=self.cantidad,
+                precio_unitario=self.precio_unitario,
+                fecha_entrada=self.compra.fecha_compra
+            )
 
-        # 4. Crear lote FIFO
-        from .models import LoteMateriaPrima
-        LoteMateriaPrima.objects.create(
-            materia_prima=materia,
-            cantidad=self.cantidad,
-            cantidad_disponible=self.cantidad,
-            precio_unitario=self.precio_unitario,
-            fecha_entrada=self.compra.fecha_compra
-        )
-
-        # 5. Actualizar total de la compra
-        self.compra.calcular_total()
+            # 5. Actualizar total de la compra
+            self.compra.calcular_total()
 
 
 class LoteMateriaPrima(models.Model):
@@ -1846,24 +1846,6 @@ class HistorialPreciosMateriaPrima(models.Model):
         return diferencia * stock_actual
 
 
-# ==================== 🔍 MANAGER PERSONALIZADO PARA VENTAS ====================
-class VentaManager(models.Manager):
-    """Manager personalizado para manejo de soft deletes en ventas."""
-
-    def activas(self):
-        """Retorna solo las ventas no eliminadas."""
-        return self.filter(eliminada=False)
-
-    def eliminadas(self):
-        """Retorna solo las ventas eliminadas."""
-        return self.filter(eliminada=True)
-
-    def del_mes(self, fecha=None):
-        """Retorna ventas activas del mes especificado (o actual)."""
-        if not fecha:
-            fecha = timezone.now().date()
-        inicio_mes = fecha.replace(day=1)
-        return self.activas().filter(fecha__date__gte=inicio_mes)
 
     def del_dia(self, fecha=None):
         """Retorna ventas activas del día especificado (o actual)."""

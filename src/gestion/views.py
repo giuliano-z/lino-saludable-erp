@@ -1,8 +1,11 @@
 # ==================== IMPORTS PRINCIPALES ====================
 import json
+import logging
 import traceback
 from datetime import datetime, timedelta
 from decimal import Decimal
+
+logger = logging.getLogger(__name__)
 
 from django.conf import settings
 from django.contrib import messages
@@ -275,7 +278,6 @@ def lista_recetas(request):
 
 # ==================== API: PRECIO DE PRODUCTO ====================
 @login_required
-@csrf_exempt
 def producto_precio(request, pk):
     """Devuelve el precio de un producto en formato JSON. Para uso en API/ajax."""
     try:
@@ -788,11 +790,8 @@ def dashboard_inteligente(request):
         return render(request, 'gestion/dashboard_inteligente.html', context)
 
     except Exception as e:
-        import traceback
         messages.error(request, f'Error al cargar dashboard inteligente: {str(e)}')
-        # Log del error completo para debugging
-        print(f"❌ Error en dashboard_inteligente: {str(e)}")
-        print(traceback.format_exc())
+        logger.error("Error en dashboard_inteligente: %s", e, exc_info=True)
 
         # Contexto de emergencia con valores seguros
         return render(request, 'gestion/dashboard_inteligente.html', {
@@ -3058,10 +3057,7 @@ def dashboard_rentabilidad(request):
 
     except Exception as e:
         messages.error(request, f'Error al cargar dashboard de rentabilidad: {str(e)}')
-        import traceback
-        print(f"❌ Error en dashboard_rentabilidad: {str(e)}")
-        print(traceback.format_exc())
-        return redirect('gestion:panel_control')
+        logger.error("Error en dashboard_rentabilidad: %s", e, exc_info=True)
         return redirect('gestion:panel_control')
 
 
