@@ -136,9 +136,6 @@ urlpatterns = [
     path('ajustes/materias-primas/<int:mp_id>/crear/', views.crear_ajuste_materia_prima, name='crear_ajuste_mp_directo'),
     path('ajustes/<int:pk>/', views.detalle_ajuste, name='detalle_ajuste'),
 
-    # ==================== VISTAS MIGRADAS/LINO V3 (LEGACY) ====================
+    # ==================== DEMO ====================
     path('demo/componentes/', views.demo_componentes, name='demo_componentes'),
-    path('productos/lino/', views.lista_productos_lino, name='lista_productos_lino'),
-    path('ventas/lino/', views.lista_ventas_lino, name='lista_ventas_lino'),
-    path('compras/lino/', views.lista_compras_lino, name='lista_compras_lino'),
 ]
