@@ -1069,6 +1069,10 @@ class Producto(models.Model):
         return self.nombre
 
     class Meta:
+        indexes = [
+            models.Index(fields=['stock'], name='producto_stock_idx'),
+            models.Index(fields=['stock', 'stock_minimo'], name='producto_stock_minimo_idx'),
+        ]
         constraints = [
             models.CheckConstraint(
                 condition=models.Q(stock__gte=0),
@@ -1335,6 +1339,10 @@ class MateriaPrima(models.Model):
         permissions = [
             ('can_manage_materias_primas', 'Puede gestionar materias primas'),
             ('can_view_stock_reports', 'Puede ver reportes de stock'),
+        ]
+        indexes = [
+            models.Index(fields=['stock_actual'], name='mp_stock_actual_idx'),
+            models.Index(fields=['stock_actual', 'stock_minimo'], name='mp_stock_minimo_idx'),
         ]
         constraints = [
             models.CheckConstraint(

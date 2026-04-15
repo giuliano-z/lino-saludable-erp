@@ -3,11 +3,14 @@ Analytics Service - Cálculos financieros avanzados
 ROI, Punto de Equilibrio, Flujo de Caja, Rotación de Inventario
 """
 
+import logging
 from datetime import timedelta
 from decimal import Decimal
 
-from django.db.models import Avg, F, Q, Sum
+from django.db.models import Avg, Case, F, Q, Sum, When
 from django.utils import timezone
+
+logger = logging.getLogger(__name__)
 
 from gestion.models import Compra, Producto, Venta, VentaDetalle
 
@@ -80,31 +83,21 @@ class AnalyticsService:
 
         costos_fijos_estimados = ventas_mes * Decimal('0.15')  # 15% de ventas
 
-        # Precio promedio y costo variable promedio
-        productos_activos = Producto.objects.filter(stock__gt=0)
+        # Precio promedio y costo variable promedio — una sola query
+        promedios = Producto.objects.filter(stock__gt=0).aggregate(
+            precio_promedio=Avg('precio'),
+            costo_promedio=Avg('costo_base'),
+        )
+        precio_promedio = Decimal(str(promedios['precio_promedio'] or 0))
+        costo_promedio = Decimal(str(promedios['costo_promedio'] or 0))
 
-        if productos_activos.exists():
-            precio_promedio = productos_activos.aggregate(
-                promedio=Avg('precio_venta')
-            )['promedio'] or Decimal('0')
-
-            costo_promedio = productos_activos.aggregate(
-                promedio=Avg('costo')
-            )['promedio'] or Decimal('0')
-
-            margen_contribucion = precio_promedio - costo_promedio
-
-            if margen_contribucion > 0:
-                unidades_equilibrio = costos_fijos_estimados / margen_contribucion
-                ventas_equilibrio = unidades_equilibrio * precio_promedio
-            else:
-                unidades_equilibrio = Decimal('0')
-                ventas_equilibrio = Decimal('0')
+        margen_contribucion = precio_promedio - costo_promedio
+        if precio_promedio > 0 and margen_contribucion > 0:
+            unidades_equilibrio = costos_fijos_estimados / margen_contribucion
+            ventas_equilibrio = unidades_equilibrio * precio_promedio
         else:
             unidades_equilibrio = Decimal('0')
             ventas_equilibrio = Decimal('0')
-            precio_promedio = Decimal('0')
-            costo_promedio = Decimal('0')
 
         return {
             'unidades_equilibrio': float(unidades_equilibrio),
@@ -134,10 +127,15 @@ class AnalyticsService:
 
         promedio_ventas_diarias = ventas_30d / 30 if ventas_30d > 0 else Decimal('0')
 
-        # Promedio diario de compras (últimos 30 días)
+        # Promedio diario de compras (últimos 30 días) — compatible legacy + nuevo sistema
         compras_30d = Compra.objects.filter(
             fecha_compra__gte=hace_30_dias
-        ).aggregate(total=Sum('precio_mayoreo'))['total'] or Decimal('0')
+        ).annotate(
+            importe=Case(
+                When(total__isnull=False, then=F('total')),
+                default=F('precio_mayoreo'),
+            )
+        ).aggregate(total=Sum('importe'))['total'] or Decimal('0')
 
         promedio_compras_diarias = compras_30d / 30 if compras_30d > 0 else Decimal('0')
 
