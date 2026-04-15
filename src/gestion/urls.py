@@ -49,10 +49,6 @@ app_name = 'gestion'
 urlpatterns = [
     # Dashboard principal - ahora usa la versión inteligente verde
     path('', views.dashboard_inteligente, name='panel_control'),
-    # Versiones alternativas del dashboard
-    path('dashboard-original/', views.panel_control_original, name='panel_control_original'),
-    path('dashboard-clean/', views.panel_control_clean, name='panel_control_clean'),
-    path('dashboard-minimal/', views.panel_control_minimal, name='panel_control_minimal'),
     path('dashboard-inteligente/', views.dashboard_inteligente, name='dashboard_inteligente'),
 
     # ==================== PRODUCTOS ====================
