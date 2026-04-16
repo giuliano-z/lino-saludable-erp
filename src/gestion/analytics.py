@@ -10,7 +10,11 @@ from decimal import Decimal
 from django.db.models import Avg, Sum
 from django.utils import timezone
 
+import logging
+
 from .models import Producto, VentaDetalle
+
+logger = logging.getLogger(__name__)
 
 
 class AnalyticsRentabilidad:
@@ -95,7 +99,7 @@ class AnalyticsRentabilidad:
 
             except Exception as e:
                 # Si hay error con un producto específico, continuar con el siguiente
-                print(f"Error procesando producto {producto.nombre}: {e}")
+                logger.error("Error procesando producto %s: %s", producto.nombre, e, exc_info=True)
                 continue
 
         # Ordenar por margen porcentual
