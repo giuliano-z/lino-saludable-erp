@@ -251,8 +251,8 @@ def eliminar_compra(request, pk):
                         materia_prima = compra.materia_prima
                         stock_anterior = materia_prima.stock_actual
                         costo_anterior = materia_prima.costo_unitario
-                        cantidad_compra = float(compra.cantidad_mayoreo)
-                        costo_compra = float(compra.precio_unitario_mayoreo)
+                        cantidad_compra = compra.cantidad_mayoreo
+                        costo_compra = compra.precio_unitario_mayoreo
 
                         # 1. Revertir el stock
                         nuevo_stock = stock_anterior - compra.cantidad_mayoreo
@@ -260,11 +260,11 @@ def eliminar_compra(request, pk):
 
                         # 2. Recalcular costo unitario (revertir promedio ponderado)
                         if nuevo_stock > 0:
-                            valor_total_actual = float(stock_anterior) * float(costo_anterior)
+                            valor_total_actual = stock_anterior * costo_anterior
                             valor_compra = cantidad_compra * costo_compra
                             valor_sin_compra = valor_total_actual - valor_compra
-                            nuevo_costo_unitario = valor_sin_compra / float(nuevo_stock)
-                            materia_prima.costo_unitario = Decimal(str(max(0, nuevo_costo_unitario)))
+                            nuevo_costo_unitario = valor_sin_compra / nuevo_stock
+                            materia_prima.costo_unitario = max(Decimal('0'), nuevo_costo_unitario)
                         else:
                             materia_prima.costo_unitario = Decimal('0.00')
 
@@ -312,8 +312,8 @@ def eliminar_compra(request, pk):
                             materia_prima = detalle.materia_prima
                             stock_anterior = materia_prima.stock_actual
                             costo_anterior = materia_prima.costo_unitario
-                            cantidad_compra = float(detalle.cantidad)
-                            costo_compra = float(detalle.precio_unitario)
+                            cantidad_compra = detalle.cantidad
+                            costo_compra = detalle.precio_unitario
 
                             # 1. Revertir stock
                             nuevo_stock = stock_anterior - detalle.cantidad
@@ -321,11 +321,11 @@ def eliminar_compra(request, pk):
 
                             # 2. Recalcular costo unitario
                             if nuevo_stock > 0:
-                                valor_total_actual = float(stock_anterior) * float(costo_anterior)
+                                valor_total_actual = stock_anterior * costo_anterior
                                 valor_compra = cantidad_compra * costo_compra
                                 valor_sin_compra = valor_total_actual - valor_compra
-                                nuevo_costo_unitario = valor_sin_compra / float(nuevo_stock)
-                                materia_prima.costo_unitario = Decimal(str(max(0, nuevo_costo_unitario)))
+                                nuevo_costo_unitario = valor_sin_compra / nuevo_stock
+                                materia_prima.costo_unitario = max(Decimal('0'), nuevo_costo_unitario)
                             else:
                                 materia_prima.costo_unitario = Decimal('0.00')
 
