@@ -12,7 +12,7 @@ jobs:
     
     env:
       PYTHONUNBUFFERED: 1
-      DEBUG: False
+      DEBUG: True
       SECRET_KEY: test-secret-key-for-ci-only
     
     steps:
