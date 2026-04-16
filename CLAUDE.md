@@ -115,21 +115,6 @@ Defined in [railway.toml](railway.toml). Start sequence: `migrate` → `createus
 
 See `.env.example` for the full list. Required for production: `SECRET_KEY`, `DATABASE_URL`, `ALLOWED_HOSTS`. Optional: `EMAIL_*` (SMTP), `REDIS_URL`.
 
-## Trabajo Pendiente (en curso)
-
-### Mejoras al sistema de backups — iniciado en sesión abril 2026
-Archivo: [backup_db.py](src/gestion/management/commands/backup_db.py)
-
-Cambios acordados pero **aún no implementados ni commiteados**:
-1. Reemplazar email hardcodeado por variable de entorno `BACKUP_EMAIL_RECIPIENT`
-2. Agregar `import logging` y `logger = logging.getLogger(__name__)`
-3. Agregar validación clara si el email no está configurado
-4. Agregar logs en 5 puntos clave: inicio, export, compress, send, cleanup
-5. Agregar `settings.py` → variable `BACKUP_EMAIL_RECIPIENT = os.getenv("BACKUP_EMAIL_RECIPIENT", "")`
-6. Documentar nueva variable en `.env.example`
-
-Estado: los archivos del proyecto tienen ~60 archivos con cambios de formato (ruff) sin commitear. Resolver eso antes de implementar las mejoras de backup.
-
 ## Qué NO hacer
 
 - **No correr `ruff --fix`, `black`, ni `isort` automáticamente** — si hay que formatear, avisar primero y hacerlo en un commit separado dedicado solo a formato.
