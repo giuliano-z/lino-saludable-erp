@@ -193,4 +193,4 @@ Cron diario a las 3 AM UTC: `backup_db` dumpea la base y la envía por mail.
 
 **Giuliano Daniel Zulatto**
 
-[LinkedIn](https://linkedin.com/in/giuliano-zulatto) · [GitHub](https://github.com/giuliano-z) · giulianodanielzulatto@gmail.com
+[LinkedIn](www.linkedin.com/in/giuliano-daniel-zulatto-37250b270) · [GitHub](https://github.com/giuliano-z) · giulianodanielzulatto@gmail.com
