@@ -1,195 +1,196 @@
-# 🥜 Lino Saludable - Sistema de Gestión
+# Lino Saludable — Sistema de Gestión Integral
 
-Sistema de gestión integral desarrollado en **Django** para la administración completa de un negocio de frutos secos y productos saludables.
+ERP web construido con Django 5.2 para un negocio real de frutos secos y dietética natural en Córdoba, Argentina. En producción desde diciembre 2024 con más de 1.800 transacciones registradas.
 
-**[GitHub](https://github.com/giuliano-z/lino_saludable)** | Sistema en producción hosteado en Railway
+Proyecto end-to-end: modelado de datos, lógica de negocio en capa de servicios, API interna, CI con GitHub Actions y deploy continuo en Railway.
 
-## ✨ Características Principales
+![CI](https://github.com/giuliano-z/lino-saludable-erp/actions/workflows/django_ci.yml/badge.svg)
+![Python](https://img.shields.io/badge/python-3.13-blue)
+![Django](https://img.shields.io/badge/django-5.2-green)
 
-### 📦 Gestión de Productos
-- Control completo de inventario con alertas de stock bajo
-- Categorización y precios dinámicos
-- Seguimiento de stock mínimo y máximo
+---
 
-### 💰 Sistema de Ventas
-- Registro rápido de ventas con cálculo automático
-- Historial completo de transacciones
-- Control de stock en tiempo real
+## Screenshots
 
-### 🚛 Compras al Mayoreo
-- Gestión de materias primas y proveedores
-- Cálculo automático de precios por kilogramo
-- Control de stock de materias primas
+### Dashboard Principal
+![Dashboard](docs/screenshots/dashboard_lino.jpeg)
 
-### 📊 Dashboard y Reportes
-- Estadísticas en tiempo real
-- Gráficos de tendencias de ventas
-- Análisis financiero con márgenes de ganancia
-- Reportes de productos más vendidos
-- Reportes configurables por rango de fechas
+### Evolución de Ventas con Chart.js
+![Dashboard 2](docs/screenshots/dashboard2_lino.jpeg)
 
-### 🔔 Sistema de Alertas
-- Notificaciones de stock bajo
-- Alertas de productos críticos
-- Seguimiento de materias primas
+### Módulo de Ventas
+![Ventas](docs/screenshots/ventas_lino.jpeg)
 
-## 🛠️ Tecnologías Utilizadas
+### Gestión de Compras al Mayoreo
+![Compras](docs/screenshots/compras_lino.jpeg)
 
-- **Backend:** Django 4.x, Python 3.x
-- **Frontend:** Bootstrap 5, HTML5, CSS3, JavaScript
-- **Base de Datos:** PostgreSQL (producción)
-- **Gráficos:** Chart.js
-- **Deployment:** Railway con Docker
-- **Control de versiones:** Git
+### Catálogo de Productos (Góndola)
+![Productos](docs/screenshots/prodcutos_lino.jpeg)
 
-## 📋 Requisitos Previos
+### Control de Depósito e Inventario
+![Depósito](docs/screenshots/deposito_lino.jpeg)
 
-- Python 3.8+
-- PostgreSQL 12+ (para producción)
-- Git
-- pip (gestor de paquetes de Python)
+### Análisis de Rentabilidad con Recomendaciones Automáticas
+![Rentabilidad](docs/screenshots/rentabilidad_lino.jpeg)
 
-## 🚀 Instalación y Configuración Local
+### Reportes por Período
+![Reportes](docs/screenshots/reportes_lino.jpeg)
 
-### 1. Clonar el repositorio
+### Configuración de Objetivos del Negocio
+![Configuración](docs/screenshots/configuracion_lino.jpeg)
 
-git clone https://github.com/giuliano-z/lino_saludable.git
-cd lino_saludable
+---
 
-text
+## Stack
 
-### 2. Crear entorno virtual
+| Capa | Tecnología |
+|------|-----------|
+| Backend | Django 5.2, Python 3.13 |
+| Base de datos | PostgreSQL (producción) · SQLite (desarrollo) |
+| Frontend | Bootstrap 5, Chart.js, HTML/CSS/JS vanilla |
+| Infraestructura | Railway, Gunicorn, WhiteNoise, Nixpacks |
+| Seguridad | django-axes, HSTS, CSP, CSRF, cookies seguras |
+| Testing | pytest, pytest-django, Playwright (E2E) |
+| CI/CD | GitHub Actions |
+| Exportación | django-import-export, openpyxl, reportlab |
+
+---
+
+## Funcionalidades
+
+### Operación diaria
+- **Ventas** con cálculo automático de totales y márgenes
+- **Compras al mayoreo** con cálculo de precio por kilogramo y actualización de stock
+- **Productos y materias primas** con control de stock, stock mínimo y vencimientos
+- **Recetas**: composición de productos elaborados a partir de materias primas con costeo automático
+
+### Inteligencia de negocio
+- **Dashboard** con métricas en tiempo real (ventas del día, márgenes, top productos)
+- **Analytics de rentabilidad** por producto, categoría y período con recomendaciones automáticas
+- **Reportes** configurables por rango de fechas, exportables a Excel/PDF
+- **Gráficos de tendencias** interactivos con Chart.js
+
+### Sistema de alertas (7 tipos)
+`stock_agotado` · `stock_crítico` · `vencimiento_próximo` · `margen_negativo` · `margen_bajo` · `stock_muerto` · `oportunidad_de_venta`
+
+Cada alerta tiene nivel de severidad (`danger` / `warning` / `info` / `success`) y es generada por servicio dedicado o comando programado.
+
+### Plataforma
+- **API JSON interna** (`/api/productos/`, `/api/inventario/`, `/api/ventas/`) para llamadas AJAX
+- **Soft delete con auditoría** — los datos reales nunca se destruyen
+- **Backups diarios automáticos** vía cron en Railway (3 AM UTC)
+- **Deploy continuo**: cada push a `main` se despliega automáticamente
+
+---
+
+## Arquitectura
+
+App única `gestion` con responsabilidades divididas por archivo:
+
+```
+src/
+├── gestion/
+│   ├── views.py              # dashboard, reportes, alertas
+│   ├── views_ventas.py       # CRUD de ventas
+│   ├── views_compras.py      # CRUD de compras
+│   ├── views_productos.py    # productos y materias primas
+│   ├── views_recetas.py      # recetas
+│   ├── api.py                # endpoints JSON
+│   ├── models.py             # modelos + managers
+│   ├── services/
+│   │   ├── alertas_service.py
+│   │   ├── analytics_service.py
+│   │   ├── dashboard_service.py
+│   │   ├── inventario_service.py
+│   │   ├── marketing_service.py
+│   │   └── rentabilidad_service.py
+│   └── management/commands/  # generar_alertas, backup_db, cargar_ejemplo_simple
+├── lino_saludable/
+│   ├── settings.py           # desarrollo + detección de entorno
+│   └── settings_production.py
+└── manage.py
+```
+
+### Decisiones técnicas destacadas
+
+**Services layer** — la lógica de negocio no vive en las vistas. Cada módulo tiene su servicio dedicado, testeable en aislamiento.
+
+**Managers personalizados** — `VentaActivaManager` es el manager por defecto y filtra soft-deletes; `VentaManager` expone todos los registros para auditoría.
+
+**Decimal estricto** — todos los campos monetarios usan `DecimalField`. Prohibido `float()` en operaciones de negocio para evitar errores de precisión.
+
+**Signals desactivados intencionalmente** — `signals.py` documenta por qué los handlers están deshabilitados (prevención de operaciones duplicadas en cadenas de save).
+
+**Índices en campos críticos** — `fecha`, `eliminada`, `usuario` en ventas, pensado para queries de reportes sobre miles de filas.
+
+---
+
+## Setup local
+
+```bash
+git clone https://github.com/giuliano-z/lino-saludable-erp.git
+cd lino-saludable-erp
 
 python3 -m venv venv
-source venv/bin/activate # En Windows: venv\Scripts\activate
-
-text
-
-### 3. Instalar dependencias
-
+source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
-text
+cp .env.example .env  # editar con tus valores
 
-### 4. Configurar variables de entorno
+cd src
+python manage.py migrate
+python manage.py createsuperuser
+python manage.py cargar_ejemplo_simple  # datos de prueba (opcional)
+python manage.py runserver
+```
 
-cp .env.example .env
+App en `http://localhost:8000` · Admin en `http://localhost:8000/admin`
 
-text
+### Variables de entorno mínimas
 
-Edita el archivo `.env` con tus credenciales locales:
-
-SECRET_KEY=tu-secret-key-super-segura-aqui
+```env
+SECRET_KEY=tu-secret-key-aqui
 DEBUG=True
 DATABASE_URL=sqlite:///db.sqlite3
 ALLOWED_HOSTS=localhost,127.0.0.1
+```
 
-text
+---
 
-### 5. Ejecutar migraciones
+## Tests
 
-python manage.py migrate
+```bash
+pytest                        # toda la suite
+pytest src/gestion/tests/     # solo unit tests
+pytest tests_e2e/ -m e2e      # E2E con Playwright
+pytest -m "not e2e"           # excluir E2E
+```
 
-text
+CI corre la suite completa en cada push/PR a `main` y `develop` (`.github/workflows/django_ci.yml`).
 
-### 6. Crear superusuario (admin)
+---
 
-python manage.py createsuperuser
+## Deploy
 
-text
+Configurado en `railway.toml`. Secuencia de arranque en cada deploy:
 
-Sigue las instrucciones para crear tu usuario administrativo.
+1. `migrate` — aplica migraciones pendientes
+2. `createusers` — asegura usuarios de sistema
+3. `resetpasswords` — rota credenciales desde variables de entorno
+4. `gunicorn` — 2 workers, timeout 60s
 
-### 7. Ejecutar servidor de desarrollo
+Cron diario a las 3 AM UTC: `backup_db` dumpea la base y la envía por mail.
 
-python manage.py runserver
+### Seguridad en producción
+- HSTS + `SECURE_SSL_REDIRECT` + cookies seguras
+- Content Security Policy + `X-Frame-Options`
+- django-axes: bloqueo tras 5 intentos fallidos en 1 hora
+- `SECRET_KEY` y credenciales siempre en variables de entorno, nunca en el repositorio
 
-text
+---
 
-El sistema estará disponible en: [**http://localhost:8000**](http://localhost:8000)
-
-Accede al admin en: [**http://localhost:8000/admin**](http://localhost:8000/admin)
-
-## 📂 Estructura del Proyecto
-
-lino_saludable/
-├── lino/ # Configuración principal de Django
-│ ├── settings.py
-│ ├── urls.py
-│ └── wsgi.py
-├── productos/ # Aplicación de productos
-│ ├── models.py
-│ ├── views.py
-│ └── templates/
-├── ventas/ # Aplicación de ventas
-├── dashboard/ # Aplicación de reportes y dashboard
-├── static/ # Archivos CSS, JS, imágenes
-├── media/ # Archivos subidos por usuarios
-├── templates/ # Templates HTML globales
-├── manage.py
-├── requirements.txt
-├── .env.example
-├── .gitignore
-└── README.md
-
-text
-
-## 🌐 Deployment en Railway
-
-El proyecto está configurado para deployarse automáticamente en [Railway](https://railway.app).
-
-**Variables de entorno en Railway:**
-- `DEBUG=False`
-- `DATABASE_URL=` (Proporcionado por Railway)
-- `SECRET_KEY=` (Tu secret key segura)
-- `ALLOWED_HOSTS=tu-dominio.railway.app`
-
-**Auto-deploy:** Cada push a `main` se actualiza automáticamente en producción.
-
-## 🔐 Seguridad
-
-- Las variables sensibles (`.env`) se excluyen de Git
-- Usa `.env.example` como template para nuevas configuraciones
-- En producción, todas las credenciales están en Railway
-- `DEBUG=False` en producción para evitar exposición de datos
-
-## 📊 Métricas del Proyecto
-
-- **+1800 transacciones** registradas en la BD
-- **Sistema de reportes** con múltiples filtros y análisis
-- **Control de stock** en tiempo real con alertas automáticas
-- **ROI tracking** y análisis financiero completo
-
-## 🎯 Próximas Mejoras
-
-- [ ] API REST para integraciones externas
-- [ ] Sistema de usuarios con roles
-- [ ] Notificaciones por email
-- [ ] Aplicación móvil
-
-## 👨‍💻 Autor
+## Autor
 
 **Giuliano Daniel Zulatto**
-- [LinkedIn](https://www.linkedin.com/in/giuliano-daniel-zulatto-37250b270/)
-- [GitHub](https://github.com/giuliano-z)
-- Email: giulianodanielzulatto@gmail.com
 
-## 📄 Licencia
-
-Este proyecto está bajo licencia MIT. Ver archivo `LICENSE` para más detalles.
-
-## 🤝 Contribuciones
-
-Las contribuciones son bienvenidas. Para cambios mayores, por favor abre un issue primero.
-
-git checkout -b feature/AmazingFeature
-git commit -m 'Add some AmazingFeature'
-git push origin feature/AmazingFeature
-
-text
-
-## 📞 Contacto y Soporte
-
-Si tienes preguntas o encuentras issues, puedes:
-- Abrir un [GitHub Issue](https://github.com/giuliano-z/lino_saludable/issues)
-- Contactarme directamente por LinkedIn
+[LinkedIn](https://linkedin.com/in/giuliano-zulatto) · [GitHub](https://github.com/giuliano-z) · giulianodanielzulatto@gmail.com
