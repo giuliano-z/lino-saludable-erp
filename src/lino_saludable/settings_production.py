@@ -14,7 +14,7 @@ from .settings import *
 
 # SECRET_KEY desde variable de entorno (CRÍTICO)
 SECRET_KEY = os.environ.get('SECRET_KEY', SECRET_KEY)
-if SECRET_KEY == 'django-insecure-REDACTED-USE-ENV-VAR':
+if SECRET_KEY.startswith('django-insecure-'):
     import warnings
     warnings.warn('⚠️  ADVERTENCIA: Usando SECRET_KEY de desarrollo. Configurar SECRET_KEY en variables de entorno.')
 

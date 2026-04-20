@@ -16,12 +16,12 @@ class Command(BaseCommand):
             {
                 'username': 'sister_emprendedora',
                 'email': 'sister@linosaludable.com',
-                'password': os.environ.get('ADMIN_PASSWORD_1', 'changeme')
+                'password': os.environ.get('ADMIN_PASSWORD_1')
             },
             {
                 'username': 'el_super_creador',
                 'email': 'creador@linosaludable.com',
-                'password': os.environ.get('ADMIN_PASSWORD_2', 'changeme')
+                'password': os.environ.get('ADMIN_PASSWORD_2')
             }
         ]
 
